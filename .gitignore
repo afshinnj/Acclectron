@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+npm-debug.log*
+
+# Local runtime data
+*.db
+.db-check/

@@ -13,10 +13,40 @@ const {
   searchProducts,
   getDatabase,
   getSalesReport,
+  getDashboardSummary,
   createSale,
   updateSale,
   settleInvoice,
-  listPurchases
+  listPurchases,
+  createSaleReturn,
+  listSalesReturns,
+  cancelSaleReturn,
+  createPurchaseReturn,
+  listPurchaseReturns,
+  cancelPurchaseReturn,
+  createCashTransaction,
+  listCashTransactions,
+  getCashSummary,
+  getPartyLedger,
+  adjustProductStock,
+  listStockMovements,
+  loginUser,
+  getCurrentUser,
+  createUser,
+  listUsers,
+  setUserActive,
+  listAuditLogs,
+  listNotifications,
+  createInstallmentPlan,
+  listInstallmentPlans,
+  recordInstallmentPayment,
+  listChecks,
+  updateCheckStatus,
+  changeCurrentUserPassword,
+  logoutUser,
+  getProfitLossReport,
+  closeDailyAccount,
+  listDailyClosures
 } = require('../src/main/database');
 
 function openTestDatabase() {
@@ -27,7 +57,7 @@ function openTestDatabase() {
 test('creates the product and purchase foundation with foreign keys and indexes', () => {
   const { directory, db } = openTestDatabase();
   try {
-    for (const table of ['products', 'categories', 'units', 'suppliers', 'parties', 'purchases', 'purchase_items', 'stock_movements']) {
+    for (const table of ['products', 'categories', 'units', 'suppliers', 'parties', 'purchases', 'purchase_items', 'stock_movements', 'sales_returns', 'sales_return_items', 'purchase_returns', 'purchase_return_items', 'cash_transactions']) {
       assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
     }
     const columns = db.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
@@ -242,6 +272,95 @@ test('records mixed cash and check payments and calculates remaining balance', (
   }
 });
 
+test('lists checks and updates their lifecycle status with audit data', () => {
+  const { directory } = openTestDatabase();
+  try {
+    const product = getDatabase(directory).prepare('SELECT id FROM products LIMIT 1').get();
+    const result = createPurchase({
+      invoiceNumber: 'P-CHECK-LIFECYCLE',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 100000 }],
+      payments: [{ method: 'check', amount: 1000, checkNumber: 'CHK-LIFE-1', bankName: 'Test Bank', dueDate: '2026-09-05' }]
+    });
+    const pending = listChecks({ status: 'pending', query: 'CHK-LIFE-1', from: '2026-09-01', to: '2026-09-30' });
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].invoiceNumber, 'P-CHECK-LIFECYCLE');
+    assert.equal(pending[0].amount, 100000);
+    const cleared = updateCheckStatus(pending[0].id, 'cleared', 'وصول در بانک');
+    assert.equal(cleared.checkStatus, 'cleared');
+    assert.equal(cleared.notes, 'وصول در بانک');
+    assert.equal(listChecks({ status: 'pending' }).length, 0);
+    assert.equal(listChecks({ status: 'cleared' }).length, 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('builds actionable notifications for checks, unpaid invoices and low stock', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 0, minimum_stock = 2 WHERE id = ?').run(product.id);
+    createPurchase({
+      invoiceNumber: 'P-NOTIFY-001',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 100000 }],
+      payments: [{ method: 'check', amount: 200, checkNumber: 'CHK-NOTIFY', dueDate: '2026-09-01' }]
+    });
+    const result = listNotifications({ today: '2026-09-02', daysAhead: 7 });
+    assert.ok(result.counts.total >= 2);
+    assert.ok(result.alerts.some((item) => item.type === 'check-overdue' && item.actionPage === 'checks'));
+    assert.ok(result.alerts.some((item) => item.type === 'low-stock' && item.actionPage === 'inventory'));
+    assert.ok(result.alerts.some((item) => item.type === 'unpaid-invoice' && item.actionPage === 'purchase-invoices'));
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('creates installment plans and allocates payments to invoice balances', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    createPurchase({ invoiceNumber: 'P-INSTALL-STOCK', items: [{ productId: product.id, quantity: 3, unitPrice: 100000 }], payments: [{ method: 'cash', amount: 3000 }] });
+    const sale = createSale({ invoiceNumber: 'S-INSTALL-001', date: '2026-09-02', items: [{ productId: product.id, quantity: 2, unitPrice: 2000 }], paidAmount: 0 });
+    const plan = createInstallmentPlan({
+      invoiceKind: 'sale',
+      invoiceId: sale.id,
+      installments: [
+        { dueDate: '2026-09-10', amount: 200000 },
+        { dueDate: '2026-10-10', amount: 200000 }
+      ]
+    });
+    assert.equal(plan.totalAmount, 400000);
+    assert.equal(plan.installments.length, 2);
+    const afterFirst = recordInstallmentPayment(plan.installments[0].id, { amount: 100000, method: 'cash' });
+    assert.equal(afterFirst.installments[0].status, 'partial');
+    assert.equal(afterFirst.installments[0].paidAmount, 100000);
+    const afterSecond = recordInstallmentPayment(plan.installments[0].id, { amount: 100000, method: 'card' });
+    assert.equal(afterSecond.installments[0].status, 'paid');
+    assert.equal(db.prepare('SELECT remaining_amount FROM sales WHERE id = ?').get(sale.id).remaining_amount, 200000);
+    assert.equal(listInstallmentPlans({ status: 'active' }).length, 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('allows the signed-in user to change and reuse their password', () => {
+  const { directory } = openTestDatabase();
+  try {
+    loginUser('admin', 'admin123');
+    assert.equal(changeCurrentUserPassword('admin123', 'newpass123'), true);
+    logoutUser();
+    assert.throws(() => loginUser('admin', 'admin123'));
+    assert.equal(loginUser('admin', 'newpass123').username, 'admin');
+  } finally {
+    logoutUser();
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('purchase monetary fields remain in cents like sales records', () => {
   const { directory, db } = openTestDatabase();
   try {
@@ -286,6 +405,25 @@ test('lists purchases and moves whole inventory units', () => {
   }
 });
 
+test('dashboard summary exposes management charts and operational lists', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    createPurchase({ invoiceNumber: 'P-DASH-001', items: [{ productId: product.id, quantity: 3, unitPrice: 1000 }], payments: [{ method: 'cash', amount: 30 }] });
+    createSale({ invoiceNumber: 'S-DASH-001', date: new Date().toISOString().slice(0, 10), items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }], paidAmount: 0 });
+    const summary = getDashboardSummary();
+    assert.ok(Array.isArray(summary.salesTrend));
+    assert.ok(Array.isArray(summary.paymentBreakdown));
+    assert.ok(Array.isArray(summary.recentSales));
+    assert.ok(Array.isArray(summary.topProducts));
+    assert.ok(Array.isArray(summary.topDebtors));
+    assert.ok(summary.recentSales.some((row) => row.invoiceNumber === 'S-DASH-001'));
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('sales report combines daily and formal sales with profit and product breakdown', () => {
   const { directory, db } = openTestDatabase();
   try {
@@ -318,6 +456,191 @@ test('searches products by keyword across all products', () => {
       .run('P-FAN-2', 'پروانه حایر 12 شیار', 95000, 95000, 85000, 8);
     assert.equal(searchProducts('پروانه').length, 2);
     assert.equal(searchProducts('حایر 10').length, 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('creates, lists and cancels a partial sale return with stock audit', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 2, purchase_price = 50000 WHERE id = ?').run(product.id);
+    const sale = createSale({
+      invoiceNumber: 'S-RETURN-001',
+      items: [{ productId: product.id, quantity: 2, unitPrice: 1000 }],
+      paidAmount: 2000
+    });
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 0);
+    const returned = createSaleReturn({
+      saleId: sale.id,
+      returnNumber: 'R-RETURN-001',
+      items: [{ saleItemId: db.prepare('SELECT id FROM sale_items WHERE sale_id = ?').get(sale.id).id, quantity: 1 }],
+      refundAmount: 100000,
+      method: 'cash',
+      reason: 'ایراد کالا'
+    });
+    assert.equal(returned.total, 100000);
+    assert.equal(returned.refund_amount, 100000);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 1);
+    assert.equal(listSalesReturns({}).length, 1);
+    cancelSaleReturn(returned.id);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 0);
+    assert.equal(db.prepare('SELECT status FROM sales_returns WHERE id = ?').get(returned.id).status, 'cancelled');
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('tracks manual cash transactions and aggregates cash summary', () => {
+  const { directory } = openTestDatabase();
+  try {
+    createCashTransaction({ type: 'expense', category: 'rent', amount: 250000, method: 'cash', date: '2026-09-02', description: 'اجاره' });
+    createCashTransaction({ type: 'income', category: 'other', amount: 100000, method: 'bank', date: '2026-09-02', description: 'دریافت متفرقه' });
+    const rows = listCashTransactions({ from: '2026-09-02', to: '2026-09-02' });
+    assert.equal(rows.length, 2);
+    const summary = getCashSummary({ from: '2026-09-02', to: '2026-09-02' });
+    assert.equal(summary.manualIncome, 100000);
+    assert.equal(summary.manualExpense, 250000);
+    assert.equal(summary.balance, -150000);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('creates and cancels a purchase return with stock, supplier balance and refund tracking', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    const supplier = createParty({ firstName: 'تأمین‌کننده', partyType: 'supplier' });
+    db.prepare('UPDATE products SET stock = 0, purchase_price = 50000 WHERE id = ?').run(product.id);
+    const purchase = createPurchase({
+      invoiceNumber: 'P-RETURN-001',
+      partyId: supplier.id,
+      items: [{ productId: product.id, quantity: 2, unitPrice: 100000 }],
+      payments: []
+    });
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 2);
+    assert.equal(Number(db.prepare('SELECT balance FROM parties WHERE id = ?').get(supplier.id).balance), 200000);
+    const purchaseItem = db.prepare('SELECT id FROM purchase_items WHERE purchase_id = ?').get(purchase.id);
+    const returned = createPurchaseReturn({
+      purchaseId: purchase.id,
+      returnNumber: 'PR-RETURN-001',
+      purchaseItemId: purchaseItem.id,
+      items: [{ purchaseItemId: purchaseItem.id, quantity: 1 }],
+      refundAmount: 100000,
+      method: 'cash'
+    });
+    assert.equal(returned.total, 100000);
+    assert.equal(returned.refund_amount, 100000);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 1);
+    assert.equal(Number(db.prepare('SELECT balance FROM parties WHERE id = ?').get(supplier.id).balance), 100000);
+    assert.equal(listPurchaseReturns({}).length, 1);
+    cancelPurchaseReturn(returned.id);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 2);
+    assert.equal(Number(db.prepare('SELECT balance FROM parties WHERE id = ?').get(supplier.id).balance), 200000);
+    assert.equal(db.prepare('SELECT status FROM purchase_returns WHERE id = ?').get(returned.id).status, 'cancelled');
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('builds a complete party ledger from sales, purchases and payments', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    const party = createParty({ firstName: 'طرف حساب', partyType: 'both' });
+    db.prepare('UPDATE products SET stock = 10, purchase_price = 0 WHERE id = ?').run(product.id);
+    createSale({
+      invoiceNumber: 'S-LEDGER-001',
+      partyId: party.id,
+      date: '2026-09-01',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }],
+      paidAmount: 500
+    });
+    createPurchase({
+      invoiceNumber: 'P-LEDGER-001',
+      partyId: party.id,
+      date: '2026-09-02',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }]
+    });
+    const ledger = getPartyLedger(party.id, { from: '2026-09-01', to: '2026-09-02' });
+    assert.equal(ledger.debit, 100000);
+    assert.equal(ledger.credit, 52000);
+    assert.equal(ledger.closingBalance, 48000);
+    assert.equal(ledger.events.length, 3);
+    assert.deepEqual(ledger.events.map((event) => event.kind), ['sale', 'payment', 'purchase']);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('adjusts counted stock and records an auditable movement', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 5 WHERE id = ?').run(product.id);
+    adjustProductStock(product.id, { stock: 2, reason: 'کسری انبار' });
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 2);
+    adjustProductStock(product.id, { stock: 7, reason: 'اصلاح شمارش' });
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 7);
+    const movements = listStockMovements({ productId: product.id }).filter((row) => row.type === 'adjustment');
+    assert.equal(movements.length, 2);
+    assert.equal(Number(movements[0].quantity), 5);
+    assert.equal(Number(movements[1].quantity), -3);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('supports user roles, authentication and audit logging', () => {
+  const { directory } = openTestDatabase();
+  try {
+    const admin = loginUser('admin', 'admin123');
+    assert.equal(admin.role, 'admin');
+    const user = createUser({ username: 'cashier1', displayName: 'صندوقدار', password: 'secret123', role: 'cashier' });
+    assert.equal(listUsers().some((item) => item.id === user.id), true);
+    setUserActive(user.id, false);
+    assert.equal(listUsers().find((item) => item.id === user.id).isActive, false);
+    const logs = listAuditLogs({});
+    assert.equal(logs.some((log) => log.action === 'auth.login'), true);
+    assert.equal(logs.some((log) => log.action === 'user.create'), true);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('calculates profit and loss and closes a day from cash and sales data', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 10, purchase_price = 50000 WHERE id = ?').run(product.id);
+    createSale({
+      invoiceNumber: 'S-PL-001',
+      date: '2026-09-02',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }],
+      paidAmount: 1000
+    });
+    createCashTransaction({ type: 'expense', category: 'rent', amount: 20000, method: 'cash', date: '2026-09-02' });
+    const report = getProfitLossReport({ from: '2026-09-02', to: '2026-09-02' });
+    assert.equal(report.netSales, 100000);
+    assert.equal(report.costTotal, 50000);
+    assert.equal(report.grossProfit, 50000);
+    assert.equal(report.expenses, 20000);
+    assert.equal(report.netProfit, 30000);
+    const closure = closeDailyAccount({ date: '2026-09-02', notes: 'پایان روز' });
+    assert.equal(closure.cashIncome, 100000);
+    assert.equal(closure.cashExpense, 20000);
+    assert.equal(closure.closingBalance, 80000);
+    assert.equal(listDailyClosures({ from: '2026-09-02', to: '2026-09-02' }).length, 1);
+    assert.throws(() => closeDailyAccount({ date: '2026-09-02' }), /قبلاً بسته شده/);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

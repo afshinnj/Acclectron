@@ -2,13 +2,17 @@
   "name": "accletron",
   "productName": "Acclectron",
   "version": "1.0.0",
-  "description": "A starter Electron desktop application",
+  "description": "نرم‌افزار حسابداری دسکتاپ فارسی برای مدیریت فروش، خرید، انبار و دریافت‌ها",
   "keywords": [
     "electron",
-    "desktop"
+    "desktop",
+    "accounting",
+    "persian",
+    "inventory",
+    "point-of-sale"
   ],
   "license": "MIT",
-  "author": "",
+  "author": "Afshin",
   "type": "commonjs",
   "main": "main.js",
   "directories": {
@@ -19,7 +23,8 @@
     "dev": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check src/main/database.js && node --check src/main/domain/sales.js",
     "test": "node --test --test-concurrency=1 test/database.test.js test/sales.test.js",
-    "build:portable": "powershell -ExecutionPolicy Bypass -File ./build-portable.ps1"
+    "build:portable": "powershell -ExecutionPolicy Bypass -File ./build-portable.ps1",
+    "release": "npm run check && npm test && npm run build:portable"
   },
   "devDependencies": {
     "electron": "^41.2.1"

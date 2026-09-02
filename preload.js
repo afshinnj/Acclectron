@@ -36,12 +36,41 @@ contextBridge.exposeInMainWorld('api', {
     create: (payload) => ipcRenderer.invoke('parties:create', payload),
     update: (id, payload) => ipcRenderer.invoke('parties:update', id, payload),
     setActive: (id, active) => ipcRenderer.invoke('parties:set-active', id, active)
+    ,ledger: (id, payload) => ipcRenderer.invoke('parties:ledger', id, payload)
+  },
+  auth: {
+    login: (username, password) => ipcRenderer.invoke('auth:login', username, password),
+    logout: () => ipcRenderer.invoke('auth:logout'),
+    current: () => ipcRenderer.invoke('auth:current'),
+    changePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth:change-password', currentPassword, newPassword)
+  },
+  users: {
+    create: (payload) => ipcRenderer.invoke('users:create', payload),
+    list: () => ipcRenderer.invoke('users:list'),
+    setActive: (id, active) => ipcRenderer.invoke('users:set-active', id, active)
+  },
+  audit: {
+    list: (payload) => ipcRenderer.invoke('audit:list', payload)
+  },
+  checks: {
+    list: (payload) => ipcRenderer.invoke('checks:list', payload),
+    updateStatus: (id, status, notes) => ipcRenderer.invoke('checks:update-status', id, status, notes)
+  },
+  installments: {
+    createPlan: (payload) => ipcRenderer.invoke('installments:create-plan', payload),
+    listPlans: (payload) => ipcRenderer.invoke('installments:list-plans', payload),
+    recordPayment: (id, payload) => ipcRenderer.invoke('installments:record-payment', id, payload)
   },
   dashboard: {
     summary: () => ipcRenderer.invoke('dashboard:summary')
   },
+  notifications: {
+    list: (payload) => ipcRenderer.invoke('notifications:list', payload)
+  },
   reports: {
-    sales: (payload) => ipcRenderer.invoke('reports:sales', payload)
+    sales: (payload) => ipcRenderer.invoke('reports:sales', payload),
+    exportCsv: (kind, payload) => ipcRenderer.invoke('reports:export-csv', kind, payload),
+    exportPdf: (payload) => ipcRenderer.invoke('reports:export-pdf', payload)
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -49,7 +78,8 @@ contextBridge.exposeInMainWorld('api', {
     printers: () => ipcRenderer.invoke('settings:printers'),
     chooseLogo: () => ipcRenderer.invoke('settings:choose-logo'),
     chooseBackupPath: () => ipcRenderer.invoke('settings:choose-backup-path'),
-    backupNow: (destination) => ipcRenderer.invoke('settings:backup-now', destination)
+    backupNow: (destination) => ipcRenderer.invoke('settings:backup-now', destination),
+    restore: () => ipcRenderer.invoke('settings:restore')
   },
   print: {
     invoice: (payload) => ipcRenderer.invoke('print:invoice', payload),
@@ -62,6 +92,38 @@ contextBridge.exposeInMainWorld('api', {
   purchases: {
     create: (payload) => ipcRenderer.invoke('purchases:create', payload),
     list: (payload) => ipcRenderer.invoke('purchases:list', payload)
+  },
+  returns: {
+    sale: {
+      create: (payload) => ipcRenderer.invoke('returns:sale:create', payload),
+      details: (id) => ipcRenderer.invoke('returns:sale:details', id),
+      list: (payload) => ipcRenderer.invoke('returns:sale:list', payload),
+      cancel: (id) => ipcRenderer.invoke('returns:sale:cancel', id)
+    },
+    purchase: {
+      create: (payload) => ipcRenderer.invoke('returns:purchase:create', payload),
+      details: (id) => ipcRenderer.invoke('returns:purchase:details', id),
+      list: (payload) => ipcRenderer.invoke('returns:purchase:list', payload),
+      cancel: (id) => ipcRenderer.invoke('returns:purchase:cancel', id)
+    }
+  },
+  cash: {
+    create: (payload) => ipcRenderer.invoke('cash:create', payload),
+    details: (id) => ipcRenderer.invoke('cash:details', id),
+    list: (payload) => ipcRenderer.invoke('cash:list', payload),
+    summary: (payload) => ipcRenderer.invoke('cash:summary', payload)
+  },
+  inventory: {
+    adjust: (id, payload) => ipcRenderer.invoke('inventory:adjust', id, payload),
+    movements: (payload) => ipcRenderer.invoke('inventory:movements', payload)
+  },
+  profitLoss: {
+    report: (payload) => ipcRenderer.invoke('profit-loss:report', payload)
+  },
+  dailyClose: {
+    create: (payload) => ipcRenderer.invoke('daily-close:create', payload),
+    details: (id) => ipcRenderer.invoke('daily-close:details', id),
+    list: (payload) => ipcRenderer.invoke('daily-close:list', payload)
   },
   invoices: {
     nextNumber: (kind, date) => ipcRenderer.invoke('invoices:next-number', kind, date),

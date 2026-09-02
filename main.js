@@ -1,4 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+// Some Windows GPU drivers terminate Electron immediately with
+// "GPU state invalid..." before the login window is usable.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -11,6 +15,7 @@ const {
   createProduct,
   createSale,
   getDashboardSummary,
+  listNotifications,
   getSalesReport,
   getDatabase,
   listCategories,
@@ -39,10 +44,44 @@ const {
   getInvoiceDetails,
   updateSale,
   settleInvoice,
-  cancelInvoice
+  cancelInvoice,
+  createSaleReturn,
+  getSaleReturnDetails,
+  listSalesReturns,
+  cancelSaleReturn,
+  createPurchaseReturn,
+  getPurchaseReturnDetails,
+  listPurchaseReturns,
+  cancelPurchaseReturn,
+  createCashTransaction,
+  getCashTransaction,
+  listCashTransactions,
+  getCashSummary,
+  getProfitLossReport,
+  closeDailyAccount,
+  getDailyClosure,
+  listDailyClosures,
+  getPartyLedger,
+  adjustProductStock,
+  listStockMovements,
+  createUser,
+  listUsers,
+  setUserActive,
+  loginUser,
+  logoutUser,
+  getCurrentUser,
+  listAuditLogs,
+  setCurrentUser,
+  listChecks,
+  updateCheckStatus,
+  createInstallmentPlan,
+  listInstallmentPlans,
+  recordInstallmentPayment,
+  changeCurrentUserPassword
 } = require('./src/main/database');
 
 let mainWindow;
+let autoBackupTimer;
 const pendingImports = new Map();
 const appIconPath = path.join(__dirname, 'assets', 'icon.png');
 
@@ -226,12 +265,22 @@ function registerIpcHandlers() {
     return selection.canceled || !selection.filePaths[0] ? { canceled: true } : { canceled: false, path: selection.filePaths[0] };
   });
   ipcMain.handle('settings:backup-now', async (_event, destination) => {
-    const targetDir = String(destination || '').trim() || app.getPath('documents');
-    fs.mkdirSync(targetDir, { recursive: true });
-    const source = path.join(app.getPath('userData'), 'accletron.db');
-    const file = path.join(targetDir, `accletron-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
-    fs.copyFileSync(source, file);
-    return { path: file };
+    return backupDatabase(destination);
+  });
+  ipcMain.handle('settings:restore', async () => {
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: 'بازیابی پشتیبان Acclectron',
+      properties: ['openFile'],
+      filters: [{ name: 'SQLite backup', extensions: ['db', 'sqlite', 'sqlite3'] }]
+    });
+    if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+    const source = selection.filePaths[0];
+    const target = path.join(app.getPath('userData'), 'accletron.db');
+    if (path.resolve(source).toLowerCase() === path.resolve(target).toLowerCase()) throw new Error('فایل پشتیبان با دیتابیس فعلی یکسان است.');
+    closeDatabase();
+    fs.copyFileSync(source, target);
+    getDatabase(app.getPath('userData'));
+    return { canceled: false, path: source };
   });
   ipcMain.handle('customers:search', (_event, query = '') => searchCustomers(query));
   ipcMain.handle('parties:list', (_event, payload = {}) => listParties(payload.query, payload.type, payload.includeInactive !== false));
@@ -239,7 +288,70 @@ function registerIpcHandlers() {
   ipcMain.handle('parties:update', (_event, id, payload) => updateParty(id, payload));
   ipcMain.handle('parties:set-active', (_event, id, active) => setPartyActive(id, active));
   ipcMain.handle('dashboard:summary', () => getDashboardSummary());
+  ipcMain.handle('notifications:list', (_event, payload = {}) => {
+    const result = listNotifications(payload);
+    const settings = getAppSettings();
+    const backup = settings.backup || {};
+    if (backup.auto) {
+      const targetDir = backup.path || app.getPath('documents');
+      let latest = null;
+      try {
+        latest = fs.readdirSync(targetDir)
+          .filter((name) => /^accletron-backup-.*\.db$/i.test(name))
+          .map((name) => path.join(targetDir, name))
+          .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime)[0] || null;
+      } catch {}
+      const interval = backup.frequency === 'weekly' ? 7 * 86400000 : 86400000;
+      if (!latest) {
+        result.alerts.push({ id: 'backup-missing', type: 'backup-missing', severity: 'danger', title: 'پشتیبان‌گیری انجام نشده', message: 'برای پایگاه‌داده هنوز فایل پشتیبان پیدا نشد.', actionPage: 'settings' });
+      } else if (Date.now() - latest.mtime > interval * 1.5) {
+        result.alerts.push({ id: 'backup-stale', type: 'backup-stale', severity: 'warning', title: 'پشتیبان‌گیری قدیمی است', message: `آخرین پشتیبان در ${new Date(latest.mtime).toLocaleString('fa-IR')} ایجاد شده است.`, actionPage: 'settings' });
+      }
+      result.counts = {
+        total: result.alerts.length,
+        danger: result.alerts.filter((item) => item.severity === 'danger').length,
+        warning: result.alerts.filter((item) => item.severity === 'warning').length,
+        info: result.alerts.filter((item) => item.severity === 'info').length
+      };
+    }
+    return result;
+  });
   ipcMain.handle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
+  ipcMain.handle('reports:export-csv', async (_event, kind, payload = {}) => {
+    const report = String(kind) === 'profit-loss' ? getProfitLossReport(payload) : getSalesReport(payload);
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: 'خروجی Excel گزارش',
+      defaultPath: `${String(kind) === 'profit-loss' ? 'سود-و-زیان' : 'گزارش-فروش'}-${new Date().toISOString().slice(0, 10)}.csv`,
+      filters: [{ name: 'Excel CSV', extensions: ['csv'] }]
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = String(kind) === 'profit-loss'
+      ? [['تاریخ', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'هزینه', 'سود خالص'], ...(report.byDate || []).map((r) => [r.date, r.netSales, r.costTotal, r.grossProfit, r.expenses, r.netProfit])]
+      : [['تاریخ', 'فروش خالص', 'هزینه', 'سود', 'تعداد فاکتور'], ...(report.byDate || []).map((r) => [r.date, r.netSales, r.costTotal, r.profitTotal, r.invoiceCount])];
+    fs.writeFileSync(selection.filePath, '\uFEFF' + rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
+    return { canceled: false, filePath: selection.filePath, count: rows.length - 1 };
+  });
+  ipcMain.handle('reports:export-pdf', async (_event, payload = {}) => {
+    if (!mainWindow?.webContents) throw new Error('پنجره گزارش آماده نیست.');
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: 'خروجی PDF گزارش',
+      defaultPath: String(payload.fileName || `گزارش-${new Date().toISOString().slice(0, 10)}.pdf`).replace(/\.pdf$/i, '') + '.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const data = await mainWindow.webContents.printToPDF({
+      printBackground: true,
+      displayHeaderFooter: false,
+      preferCSSPageSize: true,
+      margins: { marginType: 'none' },
+      pageSize: 'A4',
+      landscape: true
+    });
+    fs.writeFileSync(selection.filePath, data);
+    return { canceled: false, filePath: selection.filePath };
+  });
   ipcMain.handle('sales:create', (_event, payload) => createSale(payload));
   ipcMain.handle('purchases:create', (_event, payload) => createPurchase(payload));
   ipcMain.handle('sales:list', (_event, payload) => listSales(payload));
@@ -252,6 +364,38 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('invoices:settle', (_event, kind, id, payload) => settleInvoice(kind, id, payload));
   ipcMain.handle('invoices:cancel', (_event, kind, id) => cancelInvoice(kind, id));
+  ipcMain.handle('returns:sale:create', (_event, payload) => createSaleReturn(payload));
+  ipcMain.handle('returns:sale:details', (_event, id) => getSaleReturnDetails(id));
+  ipcMain.handle('returns:sale:list', (_event, payload) => listSalesReturns(payload));
+  ipcMain.handle('returns:sale:cancel', (_event, id) => cancelSaleReturn(id));
+  ipcMain.handle('returns:purchase:create', (_event, payload) => createPurchaseReturn(payload));
+  ipcMain.handle('returns:purchase:details', (_event, id) => getPurchaseReturnDetails(id));
+  ipcMain.handle('returns:purchase:list', (_event, payload) => listPurchaseReturns(payload));
+  ipcMain.handle('returns:purchase:cancel', (_event, id) => cancelPurchaseReturn(id));
+  ipcMain.handle('cash:create', (_event, payload) => createCashTransaction(payload));
+  ipcMain.handle('cash:details', (_event, id) => getCashTransaction(id));
+  ipcMain.handle('cash:list', (_event, payload) => listCashTransactions(payload));
+  ipcMain.handle('cash:summary', (_event, payload) => getCashSummary(payload));
+  ipcMain.handle('parties:ledger', (_event, id, payload) => getPartyLedger(id, payload));
+  ipcMain.handle('inventory:adjust', (_event, id, payload) => adjustProductStock(id, payload));
+  ipcMain.handle('inventory:movements', (_event, payload) => listStockMovements(payload));
+  ipcMain.handle('auth:login', (_event, username, password) => loginUser(username, password));
+  ipcMain.handle('auth:logout', () => logoutUser());
+  ipcMain.handle('auth:current', () => getCurrentUser());
+  ipcMain.handle('users:create', (_event, payload) => createUser(payload));
+  ipcMain.handle('users:list', () => listUsers());
+  ipcMain.handle('users:set-active', (_event, id, active) => setUserActive(id, active));
+  ipcMain.handle('audit:list', (_event, payload) => listAuditLogs(payload));
+  ipcMain.handle('checks:list', (_event, payload) => listChecks(payload));
+  ipcMain.handle('checks:update-status', (_event, id, status, notes) => updateCheckStatus(id, status, notes));
+  ipcMain.handle('installments:create-plan', (_event, payload) => createInstallmentPlan(payload));
+  ipcMain.handle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
+  ipcMain.handle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
+  ipcMain.handle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
+  ipcMain.handle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
+  ipcMain.handle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
+  ipcMain.handle('daily-close:details', (_event, id) => getDailyClosure(id));
+  ipcMain.handle('daily-close:list', (_event, payload) => listDailyClosures(payload));
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:toggle-maximize', () => {
     if (!mainWindow) return;
@@ -260,6 +404,34 @@ function registerIpcHandlers() {
   });
   ipcMain.on('window:close', () => mainWindow?.close());
   ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
+}
+
+function backupDatabase(destination) {
+  const targetDir = String(destination || '').trim() || app.getPath('documents');
+  fs.mkdirSync(targetDir, { recursive: true });
+  const source = path.join(app.getPath('userData'), 'accletron.db');
+  const file = path.join(targetDir, `accletron-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+  fs.copyFileSync(source, file);
+  return { path: file };
+}
+
+function runAutoBackupIfDue() {
+  try {
+    const settings = getAppSettings();
+    if (!settings.backup?.auto) return;
+    const targetDir = settings.backup.path || app.getPath('documents');
+    fs.mkdirSync(targetDir, { recursive: true });
+    const frequencyMs = settings.backup.frequency === 'weekly' ? 7 * 86400000 : 86400000;
+    const files = fs.readdirSync(targetDir)
+      .filter((name) => /^accletron-backup-.*\.db$/i.test(name))
+      .map((name) => path.join(targetDir, name))
+      .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files[0] && Date.now() - files[0].mtime < frequencyMs) return;
+    backupDatabase(targetDir);
+  } catch {
+    // Automatic backup must never prevent the application from starting.
+  }
 }
 
 const createWindow = () => {
@@ -292,13 +464,18 @@ app.whenReady().then(() => {
   getDatabase(app.getPath('userData'));
   registerIpcHandlers();
   createWindow();
+  runAutoBackupIfDue();
+  autoBackupTimer = setInterval(runAutoBackupIfDue, 60 * 1000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('before-quit', closeDatabase);
+app.on('before-quit', () => {
+  if (autoBackupTimer) clearInterval(autoBackupTimer);
+  closeDatabase();
+});
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });

@@ -3,8 +3,17 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { calculateSaleTotals } = require('./domain/sales');
 const { normalizePersianText } = require('./importer');
+const crypto = require('node:crypto');
 
 let database;
+let currentUserId = null;
+const ROLE_PERMISSIONS = {
+  admin: ['*'],
+  manager: ['sales', 'purchases', 'returns', 'cash', 'inventory', 'reports', 'settings', 'users'],
+  cashier: ['sales', 'returns', 'cash', 'reports'],
+  warehouse: ['purchases', 'returns', 'inventory', 'reports'],
+  viewer: ['reports']
+};
 
 function tableColumns(db, tableName) {
   return new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((column) => column.name));
@@ -197,6 +206,128 @@ function getDatabase(userDataPath) {
       CHECK ((sale_id IS NOT NULL AND purchase_id IS NULL) OR (sale_id IS NULL AND purchase_id IS NOT NULL)),
       CHECK ((method = 'check' AND check_number IS NOT NULL) OR method <> 'check')
     );
+    CREATE TABLE IF NOT EXISTS installment_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoice_kind TEXT NOT NULL CHECK (invoice_kind IN ('sale', 'purchase')),
+      invoice_id INTEGER NOT NULL,
+      total_amount INTEGER NOT NULL CHECK (total_amount > 0),
+      installment_count INTEGER NOT NULL CHECK (installment_count > 0),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(invoice_kind, invoice_id)
+    );
+    CREATE TABLE IF NOT EXISTS installments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES installment_plans(id) ON DELETE CASCADE,
+      installment_number INTEGER NOT NULL,
+      due_date TEXT NOT NULL,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      paid_amount INTEGER NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'partial', 'paid', 'overdue', 'cancelled')),
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(plan_id, installment_number)
+    );
+    CREATE TABLE IF NOT EXISTS installment_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      installment_id INTEGER NOT NULL REFERENCES installments(id) ON DELETE CASCADE,
+      invoice_payment_id INTEGER REFERENCES invoice_payments(id) ON DELETE SET NULL,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      paid_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      method TEXT NOT NULL DEFAULT 'cash',
+      notes TEXT
+    );
+    CREATE TABLE IF NOT EXISTS sales_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_number TEXT NOT NULL UNIQUE,
+      sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE RESTRICT,
+      date TEXT NOT NULL,
+      total INTEGER NOT NULL DEFAULT 0 CHECK (total >= 0),
+      refund_amount INTEGER NOT NULL DEFAULT 0 CHECK (refund_amount >= 0),
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sales_return_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_id INTEGER NOT NULL REFERENCES sales_returns(id) ON DELETE CASCADE,
+      sale_item_id INTEGER REFERENCES sale_items(id) ON DELETE SET NULL,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      quantity REAL NOT NULL CHECK (quantity > 0),
+      unit_price INTEGER NOT NULL CHECK (unit_price >= 0),
+      discount INTEGER NOT NULL DEFAULT 0 CHECK (discount >= 0),
+      total INTEGER NOT NULL CHECK (total >= 0)
+    );
+    CREATE TABLE IF NOT EXISTS purchase_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_number TEXT NOT NULL UNIQUE,
+      purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE RESTRICT,
+      date TEXT NOT NULL,
+      total INTEGER NOT NULL DEFAULT 0 CHECK (total >= 0),
+      refund_amount INTEGER NOT NULL DEFAULT 0 CHECK (refund_amount >= 0),
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS purchase_return_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_id INTEGER NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
+      purchase_item_id INTEGER REFERENCES purchase_items(id) ON DELETE SET NULL,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      quantity REAL NOT NULL CHECK (quantity > 0),
+      unit_price INTEGER NOT NULL CHECK (unit_price >= 0),
+      discount INTEGER NOT NULL DEFAULT 0 CHECK (discount >= 0),
+      total INTEGER NOT NULL CHECK (total >= 0)
+    );
+    CREATE TABLE IF NOT EXISTS cash_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+      category TEXT NOT NULL DEFAULT 'general',
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      method TEXT NOT NULL DEFAULT 'cash' CHECK (method IN ('cash', 'card', 'bank', 'other')),
+      date TEXT NOT NULL,
+      description TEXT,
+      reference_type TEXT,
+      reference_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'manager', 'cashier', 'warehouse', 'viewer')),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+      last_login_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id INTEGER,
+      details TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS daily_closures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL UNIQUE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      opening_balance INTEGER NOT NULL DEFAULT 0,
+      cash_income INTEGER NOT NULL DEFAULT 0,
+      cash_expense INTEGER NOT NULL DEFAULT 0,
+      net_sales INTEGER NOT NULL DEFAULT 0,
+      profit_total INTEGER NOT NULL DEFAULT 0,
+      closing_balance INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TRIGGER IF NOT EXISTS prevent_completed_purchase_delete
     BEFORE DELETE ON purchases
     WHEN OLD.status = 'completed'
@@ -283,12 +414,22 @@ function getDatabase(userDataPath) {
     CREATE INDEX IF NOT EXISTS idx_invoice_payments_sale_id ON invoice_payments(sale_id);
     CREATE INDEX IF NOT EXISTS idx_invoice_payments_purchase_id ON invoice_payments(purchase_id);
     CREATE INDEX IF NOT EXISTS idx_invoice_payments_due_date ON invoice_payments(due_date);
+    CREATE INDEX IF NOT EXISTS idx_installments_due_date ON installments(due_date);
+    CREATE INDEX IF NOT EXISTS idx_installment_plans_invoice ON installment_plans(invoice_kind, invoice_id);
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_number ON sales(invoice_number);
     CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status);
     CREATE INDEX IF NOT EXISTS idx_purchases_invoice_number ON purchases(invoice_number);
     CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status);
     CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);
     CREATE INDEX IF NOT EXISTS idx_stock_movements_created_at ON stock_movements(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sales_returns_sale_id ON sales_returns(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_return_items_product_id ON sales_return_items(product_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_returns_purchase_id ON purchase_returns(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_return_items_product_id ON purchase_return_items(product_id);
+    CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(date);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_daily_closures_date ON daily_closures(date);
     CREATE INDEX IF NOT EXISTS idx_parties_name ON parties(first_name, last_name);
     CREATE INDEX IF NOT EXISTS idx_parties_phone ON parties(phone);
     CREATE INDEX IF NOT EXISTS idx_parties_type ON parties(party_type);
@@ -324,12 +465,353 @@ function getDatabase(userDataPath) {
       ''
     );
   }
+  const userCount = database.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+  if (userCount === 0) {
+    const { passwordHash, passwordSalt } = hashPassword('admin123');
+    database.prepare(`
+      INSERT INTO users (username, display_name, password_hash, password_salt, role)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('admin', 'مدیر سیستم', passwordHash, passwordSalt, 'admin');
+  }
+  // One-time recovery migration for installations where the seeded admin
+  // password was not usable. Existing custom passwords are not overwritten
+  // after this marker has been written.
+  const resetMarker = database.prepare('SELECT value FROM app_settings WHERE key = ?').get('adminPasswordResetV1');
+  if (!resetMarker) {
+    const admin = database.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+    if (admin) {
+      const { passwordHash, passwordSalt } = hashPassword('admin123');
+      database.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(passwordHash, passwordSalt, admin.id);
+    }
+    database.prepare(`
+      INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run('adminPasswordResetV1', JSON.stringify(true));
+  }
   return database;
 }
 
 function requireDatabase() {
   if (!database) getDatabase();
   return database;
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const passwordHash = crypto.scryptSync(String(password || ''), salt, 64).toString('hex');
+  return { passwordHash, passwordSalt: salt };
+}
+
+function auditLog(action, entityType = null, entityId = null, details = null) {
+  const db = requireDatabase();
+  db.prepare(`
+    INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(currentUserId || null, String(action), entityType, entityId ? Number(entityId) : null, details == null ? null : JSON.stringify(details));
+}
+
+function setCurrentUser(userId = null) {
+  currentUserId = userId ? Number(userId) : null;
+  return getCurrentUser();
+}
+
+function getCurrentUser() {
+  if (!currentUserId) return null;
+  const row = requireDatabase().prepare(`
+    SELECT id, username, display_name AS displayName, role, is_active AS isActive, last_login_at AS lastLoginAt
+    FROM users WHERE id = ?
+  `).get(currentUserId);
+  if (!row || !row.isActive) {
+    currentUserId = null;
+    return null;
+  }
+  return { ...row, isActive: Boolean(row.isActive) };
+}
+
+function requirePermission(permission) {
+  const user = getCurrentUser();
+  if (!user) return true;
+  const permissions = ROLE_PERMISSIONS[user.role] || [];
+  if (permissions.includes('*') || permissions.includes(permission)) return true;
+  throw new Error('کاربر جاری مجوز انجام این عملیات را ندارد.');
+}
+
+function createUser(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('users');
+  const username = String(payload.username || '').trim().toLowerCase();
+  const displayName = String(payload.displayName || username).trim();
+  const role = ['admin', 'manager', 'cashier', 'warehouse', 'viewer'].includes(String(payload.role)) ? String(payload.role) : 'viewer';
+  const password = String(payload.password || '');
+  if (!/^[a-z0-9._-]{3,40}$/.test(username)) throw new Error('نام کاربری باید ۳ تا ۴۰ نویسهٔ لاتین معتبر داشته باشد.');
+  if (password.length < 6) throw new Error('رمز عبور باید حداقل ۶ نویسه باشد.');
+  if (!displayName) throw new Error('نام نمایشی الزامی است.');
+  const { passwordHash, passwordSalt } = hashPassword(password);
+  try {
+    const result = db.prepare(`
+      INSERT INTO users (username, display_name, password_hash, password_salt, role)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(username, displayName, passwordHash, passwordSalt, role);
+    const user = listUsers().find((item) => item.id === Number(result.lastInsertRowid));
+    auditLog('user.create', 'user', user.id, { username, role });
+    return user;
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) throw new Error('این نام کاربری قبلاً ثبت شده است.');
+    throw error;
+  }
+}
+
+function listUsers() {
+  const rows = requireDatabase().prepare(`
+    SELECT id, username, display_name AS displayName, role, is_active AS isActive,
+      last_login_at AS lastLoginAt, created_at AS createdAt, updated_at AS updatedAt
+    FROM users ORDER BY is_active DESC, username
+  `).all();
+  return rows.map((row) => ({ ...row, isActive: Boolean(row.isActive) }));
+}
+
+function setUserActive(id, active) {
+  requirePermission('users');
+  const result = requireDatabase().prepare('UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(active ? 1 : 0, Number(id));
+  if (!result.changes) throw new Error('کاربر پیدا نشد.');
+  auditLog(active ? 'user.activate' : 'user.deactivate', 'user', id);
+  if (Number(id) === currentUserId && !active) currentUserId = null;
+  return listUsers().find((user) => user.id === Number(id));
+}
+
+function loginUser(username, password) {
+  const db = requireDatabase();
+  const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(String(username || '').trim().toLowerCase());
+  if (!user) throw new Error('نام کاربری یا رمز عبور نادرست است.');
+  const passwordless = getAppSettings().security?.passwordlessLogin === true;
+  if (!passwordless) {
+    const { passwordHash } = hashPassword(password, user.password_salt);
+    const a = Buffer.from(passwordHash, 'hex');
+    const b = Buffer.from(user.password_hash, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('نام کاربری یا رمز عبور نادرست است.');
+  }
+  currentUserId = Number(user.id);
+  db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+  auditLog('auth.login', 'user', user.id);
+  return getCurrentUser();
+}
+
+function resetAdminPassword() {
+  const db = requireDatabase();
+  const admin = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+  if (!admin) throw new Error('کاربر admin پیدا نشد.');
+  const { passwordHash, passwordSalt } = hashPassword('admin123');
+  db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(passwordHash, passwordSalt, admin.id);
+  auditLog('auth.admin_password_reset', 'user', admin.id);
+  return true;
+}
+
+function logoutUser() {
+  if (currentUserId) auditLog('auth.logout', 'user', currentUserId);
+  currentUserId = null;
+  return true;
+}
+
+function listAuditLogs(payload = {}) {
+  requirePermission('users');
+  const db = requireDatabase();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  return db.prepare(`
+    SELECT a.id, a.action, a.entity_type AS entityType, a.entity_id AS entityId,
+      a.details, a.created_at AS createdAt, a.user_id AS userId,
+      COALESCE(u.display_name, u.username, 'سیستم') AS userName
+    FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
+    WHERE (? = '' OR substr(a.created_at, 1, 10) >= ?)
+      AND (? = '' OR substr(a.created_at, 1, 10) <= ?)
+    ORDER BY a.id DESC LIMIT 1000
+  `).all(from, from, to, to);
+}
+
+function listChecks(payload = {}) {
+  const db = requireDatabase();
+  const status = ['pending', 'cleared', 'bounced', 'cancelled'].includes(String(payload.status)) ? String(payload.status) : '';
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  const query = String(payload.query || '').trim();
+  return db.prepare(`
+    SELECT ip.id, ip.method, ip.amount, ip.paid_at AS paidAt, ip.check_number AS checkNumber,
+      ip.bank_name AS bankName, ip.due_date AS dueDate, ip.check_holder AS checkHolder,
+      ip.check_status AS checkStatus, ip.notes,
+      CASE WHEN ip.sale_id IS NOT NULL THEN 'sale' ELSE 'purchase' END AS invoiceKind,
+      COALESCE(s.invoice_number, p.invoice_number) AS invoiceNumber,
+      COALESCE(s.party_name, p.party_name, '') AS partyName,
+      COALESCE(s.party_phone, p.party_phone, '') AS partyPhone
+    FROM invoice_payments ip
+    LEFT JOIN sales s ON s.id = ip.sale_id
+    LEFT JOIN purchases p ON p.id = ip.purchase_id
+    WHERE ip.method = 'check'
+      AND (? = '' OR ip.check_status = ?)
+      AND (? = '' OR ip.due_date >= ?)
+      AND (? = '' OR ip.due_date <= ?)
+      AND (? = '' OR ip.check_number LIKE ? OR COALESCE(s.invoice_number, p.invoice_number) LIKE ? OR COALESCE(s.party_name, p.party_name, '') LIKE ?)
+    ORDER BY CASE WHEN ip.check_status = 'pending' THEN 0 ELSE 1 END, ip.due_date, ip.id DESC
+    LIMIT 1000
+  `).all(status, status, from, from, to, to, query, `%${query}%`, `%${query}%`, `%${query}%`);
+}
+
+function updateCheckStatus(id, status, notes = '') {
+  requirePermission('cash');
+  const valid = ['pending', 'cleared', 'bounced', 'cancelled'];
+  if (!valid.includes(String(status))) throw new Error('وضعیت چک معتبر نیست.');
+  const db = requireDatabase();
+  const check = db.prepare("SELECT id, sale_id AS saleId, purchase_id AS purchaseId FROM invoice_payments WHERE id = ? AND method = 'check'").get(Number(id));
+  if (!check) throw new Error('چک پیدا نشد.');
+  const result = db.prepare('UPDATE invoice_payments SET check_status = ?, notes = COALESCE(?, notes) WHERE id = ?').run(String(status), String(notes || '').trim() || null, Number(id));
+  if (!result.changes) throw new Error('وضعیت چک تغییر نکرد.');
+  auditLog('check.status', check.saleId ? 'sale' : 'purchase', check.saleId || check.purchaseId, { paymentId: Number(id), status });
+  return listChecks({ query: '' }).find((item) => item.id === Number(id));
+}
+
+function refreshInstallmentStatuses(db, planId = null, today = new Date().toISOString().slice(0, 10)) {
+  const where = planId == null ? '' : 'WHERE i.plan_id = ?';
+  const rows = db.prepare(`SELECT i.id, i.amount, i.paid_amount AS paidAmount, i.due_date AS dueDate, i.status FROM installments i ${where}`).all(...(planId == null ? [] : [Number(planId)]));
+  const update = db.prepare('UPDATE installments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+  for (const row of rows) {
+    if (row.status === 'cancelled') continue;
+    const paid = Number(row.paidAmount || 0);
+    const amount = Number(row.amount || 0);
+    const status = paid >= amount ? 'paid' : paid > 0 ? 'partial' : (row.dueDate < today ? 'overdue' : 'pending');
+    if (status !== row.status) update.run(status, row.id);
+  }
+}
+
+function createInstallmentPlan(payload = {}) {
+  const db = requireDatabase();
+  const invoiceKind = ['sale', 'purchase'].includes(String(payload.invoiceKind)) ? String(payload.invoiceKind) : 'sale';
+  requirePermission(invoiceKind === 'sale' ? 'sales' : 'purchases');
+  const invoiceId = Number(payload.invoiceId);
+  const table = invoiceKind === 'sale' ? 'sales' : 'purchases';
+  const invoice = db.prepare(`SELECT id, total, remaining_amount AS remainingAmount, status FROM ${table} WHERE id = ?`).get(invoiceId);
+  if (!invoice) throw new Error('فاکتور برای تقسیط پیدا نشد.');
+  if (invoice.status === 'cancelled') throw new Error('فاکتور لغوشده قابل تقسیط نیست.');
+  if (Number(invoice.remainingAmount) <= 0) throw new Error('این فاکتور مانده قابل تقسیط ندارد.');
+  if (db.prepare('SELECT id FROM installment_plans WHERE invoice_kind = ? AND invoice_id = ? AND status = ?').get(invoiceKind, invoiceId, 'active')) {
+    throw new Error('برای این فاکتور برنامه اقساط فعال وجود دارد.');
+  }
+  const raw = Array.isArray(payload.installments) ? payload.installments : [];
+  if (!raw.length || raw.length > 120) throw new Error('حداقل یک و حداکثر ۱۲۰ قسط وارد کنید.');
+  const installments = raw.map((item, index) => ({
+    number: index + 1,
+    dueDate: String(item.dueDate || '').trim(),
+    amount: Math.round(Number(item.amount || 0))
+  }));
+  if (installments.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate) || item.amount <= 0)) throw new Error('تاریخ یا مبلغ قسط نامعتبر است.');
+  const totalAmount = installments.reduce((sum, item) => sum + item.amount, 0);
+  if (totalAmount !== Number(invoice.remainingAmount)) throw new Error('جمع اقساط باید دقیقاً برابر مانده فاکتور باشد.');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = db.prepare(`
+      INSERT INTO installment_plans (invoice_kind, invoice_id, total_amount, installment_count, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(invoiceKind, invoiceId, totalAmount, installments.length, String(payload.notes || '').trim() || null);
+    const planId = Number(result.lastInsertRowid);
+    const insert = db.prepare('INSERT INTO installments (plan_id, installment_number, due_date, amount, notes) VALUES (?, ?, ?, ?, ?)');
+    installments.forEach((item) => insert.run(planId, item.number, item.dueDate, item.amount, String(payload.notes || '').trim() || null));
+    db.exec('COMMIT');
+    auditLog('installment.plan.create', invoiceKind, invoiceId, { planId, count: installments.length, totalAmount });
+    return listInstallmentPlans({ id: planId })[0];
+  } catch (error) {
+    db.exec('ROLLBACK');
+    if (String(error.message).includes('UNIQUE')) throw new Error('برای این فاکتور برنامه اقساط فعال وجود دارد.');
+    throw error;
+  }
+}
+
+function listInstallmentPlans(payload = {}) {
+  const db = requireDatabase();
+  refreshInstallmentStatuses(db);
+  const conditions = [];
+  const params = [];
+  if (payload.id) { conditions.push('ip.id = ?'); params.push(Number(payload.id)); }
+  if (['sale', 'purchase'].includes(String(payload.invoiceKind))) { conditions.push('ip.invoice_kind = ?'); params.push(String(payload.invoiceKind)); }
+  if (['active', 'completed', 'cancelled'].includes(String(payload.status))) { conditions.push('ip.status = ?'); params.push(String(payload.status)); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const plans = db.prepare(`
+    SELECT ip.id, ip.invoice_kind AS invoiceKind, ip.invoice_id AS invoiceId,
+      ip.total_amount AS totalAmount, ip.installment_count AS installmentCount,
+      ip.status, ip.notes, ip.created_at AS createdAt,
+      COALESCE(s.invoice_number, p.invoice_number) AS invoiceNumber,
+      COALESCE(s.party_name, p.party_name, '') AS partyName,
+      COALESCE(s.remaining_amount, p.remaining_amount, 0) AS invoiceRemaining
+    FROM installment_plans ip
+    LEFT JOIN sales s ON ip.invoice_kind = 'sale' AND s.id = ip.invoice_id
+    LEFT JOIN purchases p ON ip.invoice_kind = 'purchase' AND p.id = ip.invoice_id
+    ${where}
+    ORDER BY ip.id DESC
+  `).all(...params);
+  const installments = db.prepare(`
+    SELECT i.id, i.plan_id AS planId, i.installment_number AS installmentNumber,
+      i.due_date AS dueDate, i.amount, i.paid_amount AS paidAmount, i.status, i.notes
+    FROM installments i ORDER BY i.due_date, i.installment_number
+  `).all();
+  const updatePlan = db.prepare("UPDATE installment_plans SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'");
+  return plans.map((plan) => {
+    const rows = installments.filter((item) => item.planId === plan.id);
+    if (rows.length && rows.every((item) => item.status === 'paid')) { updatePlan.run(plan.id); plan.status = 'completed'; }
+    return { ...plan, installments: rows };
+  });
+}
+
+function recordInstallmentPayment(id, payload = {}) {
+  const db = requireDatabase();
+  const installment = db.prepare(`
+    SELECT i.*, ip.invoice_kind AS invoiceKind, ip.invoice_id AS invoiceId
+    FROM installments i JOIN installment_plans ip ON ip.id = i.plan_id WHERE i.id = ?
+  `).get(Number(id));
+  if (!installment) throw new Error('قسط پیدا نشد.');
+  requirePermission(installment.invoiceKind === 'sale' ? 'sales' : 'purchases');
+  if (installment.status === 'cancelled' || installment.status === 'paid') throw new Error('این قسط قابل پرداخت نیست.');
+  const amount = Math.round(Number(payload.amount || 0));
+  if (!amount || amount > Number(installment.amount) - Number(installment.paid_amount || 0)) throw new Error('مبلغ پرداخت قسط نامعتبر است.');
+  const method = ['cash', 'card', 'check'].includes(String(payload.method)) ? String(payload.method) : 'cash';
+  const invoiceTable = installment.invoiceKind === 'sale' ? 'sales' : 'purchases';
+  const invoice = db.prepare(`SELECT * FROM ${invoiceTable} WHERE id = ?`).get(installment.invoiceId);
+  if (!invoice || Number(invoice.remaining_amount) < amount) throw new Error('مبلغ از مانده فاکتور بیشتر است.');
+  const payment = normalizeInvoicePayments([{ ...payload, method, amount: amount / 100 }], Number(invoice.remaining_amount), 0).payments[0];
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    insertInvoicePayments(db, installment.invoiceKind === 'sale' ? 'sale_id' : 'purchase_id', installment.invoiceId, [payment]);
+    const paymentId = Number(db.prepare('SELECT last_insert_rowid() AS id').get().id);
+    const nextPaid = Number(invoice.paid_amount || 0) + payment.amount;
+    db.prepare(`UPDATE ${invoiceTable} SET paid_amount = ?, remaining_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(nextPaid, Math.max(0, Number(invoice.total) - nextPaid), installment.invoiceId);
+    const installmentPaid = Number(installment.paid_amount || 0) + payment.amount;
+    db.prepare('UPDATE installments SET paid_amount = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(installmentPaid, installmentPaid >= Number(installment.amount) ? 'paid' : 'partial', installment.id);
+    db.prepare('INSERT INTO installment_payments (installment_id, invoice_payment_id, amount, paid_at, method, notes) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(installment.id, paymentId, payment.amount, payment.paidAt, payment.method, payment.notes);
+    if (invoice.party_id) db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payment.amount, invoice.party_id);
+    if (installment.invoiceKind === 'sale' && invoice.customer_id) db.prepare('UPDATE customers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payment.amount, invoice.customer_id);
+    if (installment.invoiceKind === 'purchase' && invoice.supplier_id) db.prepare('UPDATE suppliers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payment.amount, invoice.supplier_id);
+    db.exec('COMMIT');
+    auditLog('installment.payment', installment.invoiceKind, installment.invoiceId, { installmentId: installment.id, amount: payment.amount });
+    return listInstallmentPlans({ id: installment.plan_id })[0];
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function changeCurrentUserPassword(currentPassword, newPassword) {
+  const user = getCurrentUser();
+  if (!user) throw new Error('ابتدا وارد حساب کاربری شوید.');
+  if (String(newPassword || '').length < 6) throw new Error('رمز عبور جدید باید حداقل ۶ نویسه باشد.');
+  const db = requireDatabase();
+  const existing = db.prepare('SELECT password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE id = ?').get(user.id);
+  const oldHash = hashPassword(currentPassword, existing.passwordSalt).passwordHash;
+  if (oldHash !== existing.passwordHash) throw new Error('رمز عبور فعلی نادرست است.');
+  const next = hashPassword(newPassword);
+  db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(next.passwordHash, next.passwordSalt, user.id);
+  auditLog('auth.password_change', 'user', user.id);
+  return true;
 }
 
 function getAppSettings() {
@@ -370,13 +852,13 @@ function getAppSettings() {
     }
     ,currency: {
       code: String(settings.currencyCode || 'IRR'),
-      name: String(settings.currencyName || 'تومان'),
-      symbol: String(settings.currencySymbol || 'تومان'),
+      name: String(settings.currencyName || 'ریال'),
+      symbol: String(settings.currencySymbol || 'ریال'),
       position: String(settings.currencyPosition || 'suffix'),
       decimals: Math.max(0, Math.min(4, Number(settings.currencyDecimals ?? 0))),
       separator: settings.currencySeparator !== false,
       rounding: String(settings.currencyRounding || 'none'),
-      inputUnit: String(settings.currencyInputUnit || 'toman')
+      inputUnit: String(settings.currencyInputUnit || 'rial')
     }
     ,product: {
       defaultUnitId: settings.defaultUnitId ? Number(settings.defaultUnitId) : null,
@@ -404,7 +886,7 @@ function getAppSettings() {
     }
     ,appearance: {
       theme: String(settings.theme || 'dark'),
-      calendar: String(settings.calendar || 'gregorian'),
+      calendar: 'jalali',
       fontScale: Number(settings.fontScale || 100),
       notifications: settings.notifications !== false,
       shortcuts: settings.shortcuts !== false
@@ -413,12 +895,16 @@ function getAppSettings() {
       auto: settings.backupAuto === true,
       frequency: String(settings.backupFrequency || 'daily'),
       path: String(settings.backupPath || '')
+    },
+    security: {
+      passwordlessLogin: settings.passwordlessLogin === true
     }
   };
 }
 
 function saveAppSettings(payload = {}) {
   const db = requireDatabase();
+  requirePermission('settings');
   const store = payload.store || {};
   const print = payload.print || {};
   const values = {
@@ -451,14 +937,22 @@ function saveAppSettings(payload = {}) {
   const currency = payload.currency || {};
   Object.assign(values, {
     currencyCode: String(currency.code || 'IRR').trim(),
-    currencyName: String(currency.name || 'تومان').trim(),
-    currencySymbol: String(currency.symbol || 'تومان').trim(),
+    currencyName: String(currency.name || 'ریال').trim(),
+    currencySymbol: String(currency.symbol || 'ریال').trim(),
     currencyPosition: ['prefix', 'suffix'].includes(String(currency.position)) ? String(currency.position) : 'suffix',
     currencyDecimals: Math.max(0, Math.min(4, Number(currency.decimals || 0))),
     currencySeparator: currency.separator !== false,
     currencyRounding: ['none', '100', '1000'].includes(String(currency.rounding)) ? String(currency.rounding) : 'none',
-    currencyInputUnit: String(currency.inputUnit || 'toman')
+    currencyInputUnit: ['rial', 'toman'].includes(String(currency.inputUnit || '').toLowerCase())
+      ? String(currency.inputUnit).toLowerCase()
+      : 'rial'
   });
+  // Keep legacy settings consistent: IRR with a ریال label must be rendered
+  // and entered in ریال even if an older record still says تومان.
+  if (values.currencyCode.toUpperCase() === 'IRR'
+      && (`${values.currencyName} ${values.currencySymbol}`).includes('ریال')) {
+    values.currencyInputUnit = 'rial';
+  }
   const product = payload.product || {};
   Object.assign(values, {
     defaultUnitId: product.defaultUnitId ? Number(product.defaultUnitId) : null,
@@ -499,6 +993,10 @@ function saveAppSettings(payload = {}) {
     backupAuto: backup.auto === true,
     backupFrequency: ['daily', 'weekly'].includes(String(backup.frequency)) ? String(backup.frequency) : 'daily',
     backupPath: String(backup.path || '').trim()
+  });
+  const security = payload.security || {};
+  Object.assign(values, {
+    passwordlessLogin: security.passwordlessLogin === true
   });
   const statement = db.prepare(`
     INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1036,13 +1534,188 @@ function getDashboardSummary() {
   const lowStock = db.prepare(
     'SELECT COUNT(*) AS count FROM products WHERE is_active = 1 AND stock <= minimum_stock'
   ).get();
+  const salesTrend = db.prepare(`
+    SELECT s.date, COALESCE(SUM(s.total), 0) AS sales,
+      COALESCE(SUM(s.total - s.tax - s.cost_total), 0) AS profit
+    FROM sales s
+    WHERE s.status = 'active' AND s.date >= date(?, '-13 day')
+    GROUP BY s.date ORDER BY s.date
+  `).all(today);
+  const paymentBreakdown = db.prepare(`
+    SELECT ip.method, COALESCE(SUM(ip.amount), 0) AS amount
+    FROM invoice_payments ip
+    LEFT JOIN sales s ON s.id = ip.sale_id
+    LEFT JOIN purchases p ON p.id = ip.purchase_id
+    WHERE (s.status = 'active' OR p.status = 'completed')
+      AND COALESCE(substr(s.date, 1, 7), substr(p.date, 1, 7)) = ?
+    GROUP BY ip.method ORDER BY amount DESC
+  `).all(month);
+  const topProducts = db.prepare(`
+    SELECT p.name, COALESCE(SUM(si.quantity), 0) AS quantity,
+      COALESCE(SUM(si.total), 0) AS netSales
+    FROM sale_items si JOIN sales s ON s.id = si.sale_id
+    JOIN products p ON p.id = si.product_id
+    WHERE s.status = 'active' AND substr(s.date, 1, 7) = ?
+    GROUP BY p.id, p.name ORDER BY netSales DESC LIMIT 6
+  `).all(month);
+  const recentSales = db.prepare(`
+    SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.total,
+      s.paid_amount AS paidAmount, s.remaining_amount AS remainingAmount,
+      COALESCE(s.party_name, '') AS partyName
+    FROM sales s WHERE s.status = 'active'
+    ORDER BY s.date DESC, s.id DESC LIMIT 8
+  `).all();
+  const topDebtors = db.prepare(`
+    SELECT partyName, SUM(balance) AS balance FROM (
+      SELECT COALESCE(NULLIF(TRIM(first_name || ' ' || COALESCE(last_name, '')), ''), code) AS partyName, balance
+      FROM parties WHERE is_active = 1 AND balance > 0
+      UNION ALL
+      SELECT name AS partyName, balance FROM customers WHERE is_active = 1 AND balance > 0
+      UNION ALL
+      SELECT name AS partyName, balance FROM suppliers WHERE is_active = 1 AND balance > 0
+    ) GROUP BY partyName ORDER BY balance DESC LIMIT 6
+  `).all();
+  const cashMonth = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
+      COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense
+    FROM cash_transactions WHERE substr(date, 1, 7) = ?
+  `).get(month);
+  const monthProfit = db.prepare(`
+    SELECT COALESCE(SUM(total - tax - cost_total), 0) AS profit
+    FROM sales WHERE status = 'active' AND substr(date, 1, 7) = ?
+  `).get(month);
+  const receivables = db.prepare(`
+    SELECT COALESCE(SUM(remaining_amount), 0) AS amount
+    FROM sales WHERE status = 'active' AND remaining_amount > 0
+  `).get();
   return {
     todaySales: Number(todaySales.total),
     todayCount: Number(todaySales.count),
     monthSales: Number(monthSales.total),
     inventory: Number(inventory.stock),
     productCount: Number(inventory.count),
-    lowStock: Number(lowStock.count)
+    lowStock: Number(lowStock.count),
+    salesTrend: salesTrend.map((row) => ({ date: row.date, sales: Number(row.sales), profit: Number(row.profit) })),
+    paymentBreakdown: paymentBreakdown.map((row) => ({ method: row.method, amount: Number(row.amount) })),
+    topProducts: topProducts.map((row) => ({ name: row.name, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
+    recentSales: recentSales.map((row) => ({ ...row, total: Number(row.total), paidAmount: Number(row.paidAmount), remainingAmount: Number(row.remainingAmount) })),
+    topDebtors: topDebtors.map((row) => ({ partyName: row.partyName, balance: Number(row.balance) })),
+    cashMonth: { income: Number(cashMonth.income), expense: Number(cashMonth.expense) },
+    monthProfit: Number(monthProfit.profit),
+    receivables: Number(receivables.amount)
+  };
+}
+
+function listNotifications(payload = {}) {
+  const db = requireDatabase();
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.today || ''))
+    ? String(payload.today)
+    : new Date().toISOString().slice(0, 10);
+  const daysAhead = Math.max(0, Math.min(30, Number(payload.daysAhead ?? 7)));
+  const horizonDate = new Date(`${today}T00:00:00Z`);
+  horizonDate.setUTCDate(horizonDate.getUTCDate() + daysAhead);
+  const horizon = horizonDate.toISOString().slice(0, 10);
+  const alerts = [];
+  const add = (alert) => alerts.push({ id: `${alert.type}-${alert.entityType || 'system'}-${alert.entityId || alert.date || alerts.length}`, ...alert });
+
+  db.prepare(`
+    SELECT ip.id, ip.amount, ip.check_number AS checkNumber, ip.due_date AS dueDate,
+      COALESCE(s.invoice_number, p.invoice_number) AS invoiceNumber,
+      COALESCE(s.party_name, p.party_name, '') AS partyName
+    FROM invoice_payments ip
+    LEFT JOIN sales s ON s.id = ip.sale_id
+    LEFT JOIN purchases p ON p.id = ip.purchase_id
+    WHERE ip.method = 'check' AND ip.check_status = 'pending'
+      AND ip.due_date IS NOT NULL AND ip.due_date <= ?
+    ORDER BY ip.due_date, ip.id LIMIT 100
+  `).all(horizon).forEach((row) => {
+    const overdue = row.dueDate < today;
+    add({
+      type: overdue ? 'check-overdue' : 'check-due',
+      severity: overdue ? 'danger' : 'warning',
+      title: overdue ? 'چک سررسیدگذشته' : 'چک نزدیک سررسید',
+      message: `${row.checkNumber || 'بدون شماره'} · ${row.partyName || row.invoiceNumber || 'بدون طرف‌حساب'} · سررسید ${row.dueDate}`,
+      entityType: 'check',
+      entityId: row.id,
+      date: row.dueDate,
+      actionPage: 'checks'
+    });
+  });
+
+  refreshInstallmentStatuses(db, null, today);
+  db.prepare(`
+    SELECT i.id, i.due_date AS dueDate, i.amount, i.paid_amount AS paidAmount,
+      ip.invoice_kind AS invoiceKind, ip.invoice_id AS invoiceId,
+      COALESCE(s.invoice_number, p.invoice_number) AS invoiceNumber,
+      COALESCE(s.party_name, p.party_name, '') AS partyName
+    FROM installments i
+    JOIN installment_plans ip ON ip.id = i.plan_id
+    LEFT JOIN sales s ON ip.invoice_kind = 'sale' AND s.id = ip.invoice_id
+    LEFT JOIN purchases p ON ip.invoice_kind = 'purchase' AND p.id = ip.invoice_id
+    WHERE ip.status = 'active' AND i.status IN ('pending', 'partial', 'overdue')
+      AND i.due_date <= ?
+    ORDER BY i.due_date, i.id LIMIT 100
+  `).all(horizon).forEach((row) => {
+    const overdue = row.dueDate < today;
+    const remaining = Number(row.amount) - Number(row.paidAmount || 0);
+    add({
+      type: overdue ? 'installment-overdue' : 'installment-due',
+      severity: overdue ? 'danger' : 'warning',
+      title: overdue ? 'قسط معوق' : 'قسط نزدیک سررسید',
+      message: `${row.invoiceNumber || 'بدون شماره'} · ${row.partyName || 'بدون طرف‌حساب'} · مانده ${remaining} · سررسید ${row.dueDate}`,
+      entityType: 'installment',
+      entityId: row.id,
+      date: row.dueDate,
+      actionPage: 'installments'
+    });
+  });
+
+  db.prepare(`
+    SELECT id, invoice_number AS invoiceNumber, remaining_amount AS remainingAmount,
+      date, party_name AS partyName, 'sale' AS invoiceKind
+    FROM sales WHERE status = 'active' AND remaining_amount > 0
+    UNION ALL
+    SELECT id, invoice_number AS invoiceNumber, remaining_amount AS remainingAmount,
+      date, party_name AS partyName, 'purchase' AS invoiceKind
+    FROM purchases WHERE status = 'completed' AND remaining_amount > 0
+    ORDER BY date DESC, id DESC LIMIT 100
+  `).all().forEach((row) => add({
+    type: 'unpaid-invoice',
+    severity: 'info',
+    title: row.invoiceKind === 'sale' ? 'فاکتور فروش تسویه‌نشده' : 'فاکتور خرید تسویه‌نشده',
+    message: `${row.invoiceNumber || 'بدون شماره'} · ${row.partyName || 'بدون طرف‌حساب'} · مانده ${row.remainingAmount}`,
+    entityType: row.invoiceKind,
+    entityId: row.id,
+    date: row.date,
+    actionPage: row.invoiceKind === 'sale' ? 'sales-invoices' : 'purchase-invoices'
+  }));
+
+  db.prepare(`
+    SELECT id, name, stock, minimum_stock AS minimumStock
+    FROM products
+    WHERE is_active = 1 AND stock <= minimum_stock
+    ORDER BY stock ASC, name LIMIT 100
+  `).all().forEach((row) => add({
+    type: 'low-stock',
+    severity: Number(row.stock) < 0 ? 'danger' : 'warning',
+    title: Number(row.stock) < 0 ? 'موجودی منفی' : 'موجودی کمتر از حداقل',
+    message: `${row.name} · موجودی ${row.stock} از حداقل ${row.minimumStock}`,
+    entityType: 'product',
+    entityId: row.id,
+    actionPage: 'inventory'
+  }));
+
+  const severityRank = { danger: 0, warning: 1, info: 2 };
+  alerts.sort((a, b) => (severityRank[a.severity] - severityRank[b.severity]) || String(a.date || '').localeCompare(String(b.date || '')));
+  return {
+    alerts,
+    counts: {
+      total: alerts.length,
+      danger: alerts.filter((item) => item.severity === 'danger').length,
+      warning: alerts.filter((item) => item.severity === 'warning').length,
+      info: alerts.filter((item) => item.severity === 'info').length
+    },
+    generatedAt: new Date().toISOString()
   };
 }
 
@@ -1281,6 +1954,7 @@ function getAvailableSaleProducts(db, items) {
 
 function createSale(payload = {}) {
   const db = requireDatabase();
+  requirePermission('sales');
   const baseTotals = calculateSaleTotals(payload.items, payload.discount, payload.tax, 0);
   const paymentTotals = normalizeInvoicePayments(payload.payments, baseTotals.total, payload.paidAmount);
   const totals = { ...baseTotals, ...paymentTotals };
@@ -1349,6 +2023,7 @@ function createSale(payload = {}) {
       db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(totals.remainingAmount, partyId);
     }
     db.exec('COMMIT');
+    auditLog('sale.create', 'sale', saleId, { invoiceNumber, total: totals.total });
     return { id: saleId, invoiceNumber, costTotal, profitTotal, itemCount, ...totals };
   } catch (error) {
     db.exec('ROLLBACK');
@@ -1358,6 +2033,7 @@ function createSale(payload = {}) {
 
 function createPurchase(payload = {}) {
   const db = requireDatabase();
+  requirePermission('purchases');
   const items = (payload.items || []).map((item) => {
     // Purchase quantities are whole inventory units in the invoice editor.
     // Normalize API payloads too so stock moves by whole units.
@@ -1437,6 +2113,7 @@ function createPurchase(payload = {}) {
         .run(paymentTotals.remainingAmount, partyId);
     }
     db.exec('COMMIT');
+    auditLog('purchase.create', 'purchase', purchaseId, { invoiceNumber, total });
     return { id: purchaseId, invoiceNumber, subtotal, discount, tax, total, paidAmount, remainingAmount: paymentTotals.remainingAmount, payments: paymentTotals.payments };
   } catch (error) {
     db.exec('ROLLBACK');
@@ -1480,6 +2157,7 @@ function listPurchases(payload = {}) { return invoiceListQuery('purchase', paylo
 
 function updateSale(id, payload = {}) {
   const db = requireDatabase();
+  requirePermission('sales');
   const saleId = Number(id);
   const existing = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
   if (!existing) throw new Error('فاکتور پیدا نشد.');
@@ -1527,6 +2205,7 @@ function updateSale(id, payload = {}) {
       db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(totals.remainingAmount, party.partyId);
     }
     db.exec('COMMIT');
+    auditLog('sale.update', 'sale', saleId);
     return getInvoiceDetails('sale', saleId);
   } catch (error) {
     db.exec('ROLLBACK');
@@ -1564,6 +2243,7 @@ function getInvoiceDetails(kind, id) {
 
 function settleInvoice(kind, id, payload = {}) {
   const db = requireDatabase();
+  requirePermission('sales');
   const invoiceId = Number(id);
   const table = kind === 'sale' ? 'sales' : 'purchases';
   const invoice = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(invoiceId);
@@ -1588,6 +2268,7 @@ function settleInvoice(kind, id, payload = {}) {
       if (kind === 'purchase' && invoice.supplier_id) db.prepare('UPDATE suppliers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payment.amount, invoice.supplier_id);
     }
     db.exec('COMMIT');
+    auditLog('invoice.settle', kind, invoiceId, { amount: payment.amount });
     return getInvoiceDetails(kind, invoiceId);
   } catch (error) {
     db.exec('ROLLBACK');
@@ -1597,6 +2278,7 @@ function settleInvoice(kind, id, payload = {}) {
 
 function cancelInvoice(kind, id) {
   const db = requireDatabase();
+  requirePermission(kind === 'sale' ? 'sales' : 'purchases');
   const invoiceId = Number(id);
   const table = kind === 'sale' ? 'sales' : 'purchases';
   const itemTable = kind === 'sale' ? 'sale_items' : 'purchase_items';
@@ -1625,6 +2307,7 @@ function cancelInvoice(kind, id) {
     }
     db.prepare(`UPDATE ${table} SET status = 'cancelled', remaining_amount = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(invoiceId);
     db.exec('COMMIT');
+    auditLog('invoice.cancel', kind, invoiceId);
     return getInvoiceDetails(kind, invoiceId);
   } catch (error) {
     db.exec('ROLLBACK');
@@ -1632,11 +2315,609 @@ function cancelInvoice(kind, id) {
   }
 }
 
+function nextReturnNumber(db, date) {
+  const year = String(gregorianToJalaliYear(date));
+  const rows = db.prepare('SELECT return_number AS number FROM sales_returns WHERE return_number LIKE ?').all(`R-${year}-%`);
+  const sequence = rows.reduce((max, row) => {
+    const match = String(row.number).match(/-(\d+)$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0) + 1;
+  return `R-${year}-${String(sequence).padStart(6, '0')}`;
+}
+
+function createSaleReturn(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('returns');
+  const saleId = Number(payload.saleId);
+  const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
+  if (!sale) throw new Error('فاکتور فروش پیدا نشد.');
+  if (sale.status === 'cancelled') throw new Error('فاکتور لغوشده قابل مرجوعی نیست.');
+  const requested = Array.isArray(payload.items) ? payload.items : [];
+  if (!requested.length) throw new Error('حداقل یک قلم برای مرجوعی انتخاب کنید.');
+  const saleItems = db.prepare(`
+    SELECT si.*, p.name AS productName
+    FROM sale_items si JOIN products p ON p.id = si.product_id
+    WHERE si.sale_id = ?
+  `).all(saleId);
+  const returned = db.prepare(`
+    SELECT sri.sale_item_id AS saleItemId, SUM(sri.quantity) AS quantity
+    FROM sales_return_items sri JOIN sales_returns sr ON sr.id = sri.return_id
+    WHERE sr.sale_id = ? AND sr.status = 'completed'
+    GROUP BY sri.sale_item_id
+  `).all(saleId);
+  const returnedMap = new Map(returned.map((row) => [Number(row.saleItemId), Number(row.quantity || 0)]));
+  const items = requested.map((raw) => {
+    const saleItem = saleItems.find((item) => Number(item.id) === Number(raw.saleItemId)
+      || Number(item.product_id) === Number(raw.productId));
+    if (!saleItem) throw new Error('قلم فاکتور برای مرجوعی پیدا نشد.');
+    const quantity = Number(raw.quantity);
+    const available = Number(saleItem.quantity) - (returnedMap.get(Number(saleItem.id)) || 0);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > available + 1e-9) {
+      throw new Error(`تعداد مرجوعی «${saleItem.productName}» بیشتر از مقدار قابل مرجوعی است.`);
+    }
+    const lineDiscount = saleItem.quantity > 0
+      ? Math.min(Number(saleItem.discount || 0), Math.round(Number(saleItem.discount || 0) * quantity / Number(saleItem.quantity)))
+      : 0;
+    return {
+      saleItemId: Number(saleItem.id),
+      productId: Number(saleItem.product_id),
+      productName: saleItem.productName,
+      quantity,
+      unitPrice: Number(saleItem.unit_price || 0),
+      discount: lineDiscount,
+      total: Math.max(0, Math.round(quantity * Number(saleItem.unit_price || 0)) - lineDiscount)
+    };
+  });
+  const total = items.reduce((sum, item) => sum + item.total, 0);
+  const refundAmount = Math.min(total, Math.max(0, Math.round(Number(payload.refundAmount || 0))));
+  const date = normalizeInvoiceDate(payload.date);
+  const returnNumber = String(payload.returnNumber || '').trim() || nextReturnNumber(db, date);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = db.prepare(`
+      INSERT INTO sales_returns (return_number, sale_id, date, total, refund_amount, reason, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed')
+    `).run(returnNumber, saleId, date, total, refundAmount, String(payload.reason || '').trim());
+    const returnId = Number(result.lastInsertRowid);
+    const insertItem = db.prepare(`
+      INSERT INTO sales_return_items (return_id, sale_item_id, product_id, quantity, unit_price, discount, total)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const updateStock = db.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const movement = db.prepare(`
+      INSERT INTO stock_movements (product_id, type, quantity, reference_type, reference_id, description)
+      VALUES (?, 'sale_return', ?, 'sale_return', ?, ?)
+    `);
+    for (const item of items) {
+      insertItem.run(returnId, item.saleItemId, item.productId, item.quantity, item.unitPrice, item.discount, item.total);
+      updateStock.run(item.quantity, item.productId);
+      movement.run(item.productId, item.quantity, returnId, `مرجوعی ${returnNumber}`);
+    }
+    if (refundAmount > 0) {
+      db.prepare(`
+        INSERT INTO cash_transactions (type, category, amount, method, date, description, reference_type, reference_id)
+        VALUES ('expense', 'sales_return', ?, ?, ?, ?, 'sales_return', ?)
+      `).run(refundAmount, String(payload.method || 'cash').match(/^(cash|card|bank|other)$/)?.[1] || 'cash', date, `استرداد مرجوعی ${returnNumber}`, returnId);
+    }
+    db.exec('COMMIT');
+    auditLog('sale_return.create', 'sales_return', returnId, { returnNumber, total, refundAmount });
+    return getSaleReturnDetails(returnId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function getSaleReturnDetails(id) {
+  const db = requireDatabase();
+  const returnId = Number(id);
+  const row = db.prepare(`
+    SELECT sr.*, s.invoice_number AS saleInvoiceNumber,
+      COALESCE(s.party_name, '') AS partyName
+    FROM sales_returns sr JOIN sales s ON s.id = sr.sale_id
+    WHERE sr.id = ?
+  `).get(returnId);
+  if (!row) throw new Error('مرجوعی پیدا نشد.');
+  const items = db.prepare(`
+    SELECT sri.*, p.name AS productName, p.code AS productCode
+    FROM sales_return_items sri JOIN products p ON p.id = sri.product_id
+    WHERE sri.return_id = ? ORDER BY sri.id
+  `).all(returnId);
+  return { ...row, items };
+}
+
+function listSalesReturns(payload = {}) {
+  const db = requireDatabase();
+  const query = String(payload.query || '').trim();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  return db.prepare(`
+    SELECT sr.id, sr.return_number AS returnNumber, sr.sale_id AS saleId,
+      sr.date, sr.total, sr.refund_amount AS refundAmount, sr.reason, sr.status,
+      s.invoice_number AS saleInvoiceNumber, COALESCE(s.party_name, '') AS partyName
+    FROM sales_returns sr JOIN sales s ON s.id = sr.sale_id
+    WHERE (? = '' OR sr.return_number LIKE ? OR s.invoice_number LIKE ? OR COALESCE(s.party_name, '') LIKE ?)
+      AND (? = '' OR sr.date >= ?) AND (? = '' OR sr.date <= ?)
+    ORDER BY sr.date DESC, sr.id DESC LIMIT 500
+  `).all(query, `%${query}%`, `%${query}%`, `%${query}%`, from, from, to, to);
+}
+
+function cancelSaleReturn(id) {
+  const db = requireDatabase();
+  requirePermission('returns');
+  const returnId = Number(id);
+  const record = db.prepare('SELECT * FROM sales_returns WHERE id = ?').get(returnId);
+  if (!record) throw new Error('مرجوعی پیدا نشد.');
+  if (record.status === 'cancelled') throw new Error('این مرجوعی قبلاً لغو شده است.');
+  const items = db.prepare('SELECT product_id AS productId, quantity FROM sales_return_items WHERE return_id = ?').all(returnId);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const updateStock = db.prepare('UPDATE products SET stock = stock - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const movement = db.prepare(`
+      INSERT INTO stock_movements (product_id, type, quantity, reference_type, reference_id, description)
+      VALUES (?, 'sale_return_cancel', ?, 'sales_return', ?, ?)
+    `);
+    for (const item of items) {
+      const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.productId);
+      if (!product || Number(product.stock) < Number(item.quantity)) throw new Error('موجودی فعلی برای لغو مرجوعی کافی نیست.');
+      updateStock.run(item.quantity, item.productId);
+      movement.run(item.productId, -Number(item.quantity), returnId, `لغو مرجوعی ${record.return_number}`);
+    }
+    db.prepare("UPDATE sales_returns SET status = 'cancelled' WHERE id = ?").run(returnId);
+    db.prepare("DELETE FROM cash_transactions WHERE reference_type = 'sales_return' AND reference_id = ?").run(returnId);
+    db.exec('COMMIT');
+    auditLog('sale_return.cancel', 'sales_return', returnId);
+    return getSaleReturnDetails(returnId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function nextPurchaseReturnNumber(db, date) {
+  const year = String(gregorianToJalaliYear(date));
+  const rows = db.prepare('SELECT return_number AS number FROM purchase_returns WHERE return_number LIKE ?').all(`PR-${year}-%`);
+  const sequence = rows.reduce((max, row) => {
+    const match = String(row.number).match(/-(\d+)$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0) + 1;
+  return `PR-${year}-${String(sequence).padStart(6, '0')}`;
+}
+
+function createPurchaseReturn(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('returns');
+  const purchaseId = Number(payload.purchaseId);
+  const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchaseId);
+  if (!purchase) throw new Error('فاکتور خرید پیدا نشد.');
+  if (purchase.status === 'cancelled') throw new Error('فاکتور لغوشده قابل مرجوعی نیست.');
+  const requested = Array.isArray(payload.items) ? payload.items : [];
+  if (!requested.length) throw new Error('حداقل یک قلم برای مرجوعی خرید انتخاب کنید.');
+  const purchaseItems = db.prepare(`
+    SELECT pi.*, p.name AS productName
+    FROM purchase_items pi JOIN products p ON p.id = pi.product_id
+    WHERE pi.purchase_id = ?
+  `).all(purchaseId);
+  const returned = db.prepare(`
+    SELECT pri.purchase_item_id AS purchaseItemId, SUM(pri.quantity) AS quantity
+    FROM purchase_return_items pri JOIN purchase_returns pr ON pr.id = pri.return_id
+    WHERE pr.purchase_id = ? AND pr.status = 'completed'
+    GROUP BY pri.purchase_item_id
+  `).all(purchaseId);
+  const returnedMap = new Map(returned.map((row) => [Number(row.purchaseItemId), Number(row.quantity || 0)]));
+  const items = requested.map((raw) => {
+    const purchaseItem = purchaseItems.find((item) => Number(item.id) === Number(raw.purchaseItemId)
+      || Number(item.product_id) === Number(raw.productId));
+    if (!purchaseItem) throw new Error('قلم فاکتور خرید برای مرجوعی پیدا نشد.');
+    const quantity = Number(raw.quantity);
+    const available = Number(purchaseItem.quantity) - (returnedMap.get(Number(purchaseItem.id)) || 0);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > available + 1e-9) {
+      throw new Error(`تعداد مرجوعی «${purchaseItem.productName}» بیشتر از مقدار قابل مرجوعی است.`);
+    }
+    const lineDiscount = purchaseItem.quantity > 0
+      ? Math.min(Number(purchaseItem.discount || 0), Math.round(Number(purchaseItem.discount || 0) * quantity / Number(purchaseItem.quantity)))
+      : 0;
+    return {
+      purchaseItemId: Number(purchaseItem.id),
+      productId: Number(purchaseItem.product_id),
+      productName: purchaseItem.productName,
+      quantity,
+      unitPrice: Number(purchaseItem.unit_price || 0),
+      discount: lineDiscount,
+      total: Math.max(0, Math.round(quantity * Number(purchaseItem.unit_price || 0)) - lineDiscount)
+    };
+  });
+  const total = items.reduce((sum, item) => sum + item.total, 0);
+  const refundAmount = Math.min(total, Math.max(0, Math.round(Number(payload.refundAmount || 0))));
+  const date = normalizeInvoiceDate(payload.date);
+  const returnNumber = String(payload.returnNumber || '').trim() || nextPurchaseReturnNumber(db, date);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = db.prepare(`
+      INSERT INTO purchase_returns (return_number, purchase_id, date, total, refund_amount, reason, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed')
+    `).run(returnNumber, purchaseId, date, total, refundAmount, String(payload.reason || '').trim());
+    const returnId = Number(result.lastInsertRowid);
+    const insertItem = db.prepare(`
+      INSERT INTO purchase_return_items (return_id, purchase_item_id, product_id, quantity, unit_price, discount, total)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const updateStock = db.prepare('UPDATE products SET stock = stock - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const movement = db.prepare(`
+      INSERT INTO stock_movements (product_id, type, quantity, reference_type, reference_id, description)
+      VALUES (?, 'purchase_return', ?, 'purchase_return', ?, ?)
+    `);
+    for (const item of items) {
+      const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.productId);
+      if (!product || Number(product.stock) < item.quantity) throw new Error(`موجودی «${item.productName}» برای مرجوعی خرید کافی نیست.`);
+      insertItem.run(returnId, item.purchaseItemId, item.productId, item.quantity, item.unitPrice, item.discount, item.total);
+      updateStock.run(item.quantity, item.productId);
+      movement.run(item.productId, -item.quantity, returnId, `مرجوعی خرید ${returnNumber}`);
+    }
+    if (refundAmount > 0) {
+      db.prepare(`
+        INSERT INTO cash_transactions (type, category, amount, method, date, description, reference_type, reference_id)
+        VALUES ('income', 'purchase_return', ?, ?, ?, ?, 'purchase_return', ?)
+      `).run(refundAmount, String(payload.method || 'cash').match(/^(cash|card|bank|other)$/)?.[1] || 'cash', date, `دریافت بابت مرجوعی خرید ${returnNumber}`, returnId);
+    }
+    if (purchase.supplier_id && total > 0) {
+      db.prepare('UPDATE suppliers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(total, purchase.supplier_id);
+    }
+    if (purchase.party_id && total > 0) {
+      db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(total, purchase.party_id);
+    }
+    db.exec('COMMIT');
+    auditLog('purchase_return.create', 'purchase_return', returnId, { returnNumber, total, refundAmount });
+    return getPurchaseReturnDetails(returnId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function getPurchaseReturnDetails(id) {
+  const db = requireDatabase();
+  const returnId = Number(id);
+  const row = db.prepare(`
+    SELECT pr.*, p.invoice_number AS purchaseInvoiceNumber, COALESCE(p.party_name, '') AS partyName
+    FROM purchase_returns pr JOIN purchases p ON p.id = pr.purchase_id
+    WHERE pr.id = ?
+  `).get(returnId);
+  if (!row) throw new Error('مرجوعی خرید پیدا نشد.');
+  const items = db.prepare(`
+    SELECT pri.*, p.name AS productName, p.code AS productCode
+    FROM purchase_return_items pri JOIN products p ON p.id = pri.product_id
+    WHERE pri.return_id = ? ORDER BY pri.id
+  `).all(returnId);
+  return { ...row, items };
+}
+
+function listPurchaseReturns(payload = {}) {
+  const db = requireDatabase();
+  const query = String(payload.query || '').trim();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  return db.prepare(`
+    SELECT pr.id, pr.return_number AS returnNumber, pr.purchase_id AS purchaseId,
+      pr.date, pr.total, pr.refund_amount AS refundAmount, pr.reason, pr.status,
+      p.invoice_number AS purchaseInvoiceNumber, COALESCE(p.party_name, '') AS partyName
+    FROM purchase_returns pr JOIN purchases p ON p.id = pr.purchase_id
+    WHERE (? = '' OR pr.return_number LIKE ? OR p.invoice_number LIKE ? OR COALESCE(p.party_name, '') LIKE ?)
+      AND (? = '' OR pr.date >= ?) AND (? = '' OR pr.date <= ?)
+    ORDER BY pr.date DESC, pr.id DESC LIMIT 500
+  `).all(query, `%${query}%`, `%${query}%`, `%${query}%`, from, from, to, to);
+}
+
+function cancelPurchaseReturn(id) {
+  const db = requireDatabase();
+  requirePermission('returns');
+  const returnId = Number(id);
+  const record = db.prepare('SELECT * FROM purchase_returns WHERE id = ?').get(returnId);
+  if (!record) throw new Error('مرجوعی خرید پیدا نشد.');
+  if (record.status === 'cancelled') throw new Error('این مرجوعی خرید قبلاً لغو شده است.');
+  const items = db.prepare('SELECT product_id AS productId, quantity FROM purchase_return_items WHERE return_id = ?').all(returnId);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const updateStock = db.prepare('UPDATE products SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const movement = db.prepare(`
+      INSERT INTO stock_movements (product_id, type, quantity, reference_type, reference_id, description)
+      VALUES (?, 'purchase_return_cancel', ?, 'purchase_return', ?, ?)
+    `);
+    for (const item of items) {
+      updateStock.run(item.quantity, item.productId);
+      movement.run(item.productId, Number(item.quantity), returnId, `لغو مرجوعی خرید ${record.return_number}`);
+    }
+    const purchase = db.prepare('SELECT supplier_id, party_id FROM purchases WHERE id = ?').get(record.purchase_id);
+    if (purchase?.supplier_id) db.prepare('UPDATE suppliers SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(record.total, purchase.supplier_id);
+    if (purchase?.party_id) db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(record.total, purchase.party_id);
+    db.prepare("UPDATE purchase_returns SET status = 'cancelled' WHERE id = ?").run(returnId);
+    db.prepare("DELETE FROM cash_transactions WHERE reference_type = 'purchase_return' AND reference_id = ?").run(returnId);
+    db.exec('COMMIT');
+    auditLog('purchase_return.cancel', 'purchase_return', returnId);
+    return getPurchaseReturnDetails(returnId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function createCashTransaction(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('cash');
+  const type = ['income', 'expense'].includes(String(payload.type)) ? String(payload.type) : '';
+  const method = ['cash', 'card', 'bank', 'other'].includes(String(payload.method)) ? String(payload.method) : 'cash';
+  const amount = Math.round(Number(payload.amount || 0));
+  if (!type) throw new Error('نوع تراکنش صندوق معتبر نیست.');
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ تراکنش باید بیشتر از صفر باشد.');
+  const date = normalizeInvoiceDate(payload.date);
+  const result = db.prepare(`
+    INSERT INTO cash_transactions (type, category, amount, method, date, description)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(type, String(payload.category || 'general').trim() || 'general', amount, method, date, String(payload.description || '').trim());
+  const transaction = getCashTransaction(Number(result.lastInsertRowid));
+  auditLog('cash.create', 'cash_transaction', transaction.id, { type, amount, category: transaction.category });
+  return transaction;
+}
+
+function getCashTransaction(id) {
+  const db = requireDatabase();
+  const row = db.prepare('SELECT id, type, category, amount, method, date, description, reference_type AS referenceType, reference_id AS referenceId, created_at AS createdAt FROM cash_transactions WHERE id = ?').get(Number(id));
+  if (!row) throw new Error('تراکنش صندوق پیدا نشد.');
+  return row;
+}
+
+function listCashTransactions(payload = {}) {
+  const db = requireDatabase();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  const type = ['income', 'expense'].includes(String(payload.type)) ? String(payload.type) : '';
+  return db.prepare(`
+    SELECT id, type, category, amount, method, date, description,
+      reference_type AS referenceType, reference_id AS referenceId, created_at AS createdAt
+    FROM cash_transactions
+    WHERE (? = '' OR date >= ?) AND (? = '' OR date <= ?) AND (? = '' OR type = ?)
+    ORDER BY date DESC, id DESC LIMIT 500
+  `).all(from, from, to, to, type, type);
+}
+
+function getCashSummary(payload = {}) {
+  const db = requireDatabase();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  const manual = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
+      COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense
+    FROM cash_transactions WHERE (? = '' OR date >= ?) AND (? = '' OR date <= ?)
+  `).get(from, from, to, to);
+  const payments = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN ip.method IN ('cash','card','bank') AND s.status = 'active' THEN ip.amount ELSE 0 END), 0) AS salesIncome,
+      COALESCE(SUM(CASE WHEN ip.method IN ('cash','card','bank') AND p.status = 'completed' THEN ip.amount ELSE 0 END), 0) AS purchaseExpense
+    FROM invoice_payments ip
+    LEFT JOIN sales s ON s.id = ip.sale_id
+    LEFT JOIN purchases p ON p.id = ip.purchase_id
+    WHERE (? = '' OR substr(ip.paid_at, 1, 10) >= ?) AND (? = '' OR substr(ip.paid_at, 1, 10) <= ?)
+  `).get(from, from, to, to);
+  const income = Number(manual.income || 0) + Number(payments.salesIncome || 0);
+  const expense = Number(manual.expense || 0) + Number(payments.purchaseExpense || 0);
+  return { income, expense, balance: income - expense, manualIncome: Number(manual.income || 0), manualExpense: Number(manual.expense || 0), salesIncome: Number(payments.salesIncome || 0), purchaseExpense: Number(payments.purchaseExpense || 0) };
+}
+
+function getProfitLossReport(payload = {}) {
+  const db = requireDatabase();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  const range = (column = 'date') => `(? = '' OR ${column} >= ?) AND (? = '' OR ${column} <= ?)`;
+  const sales = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN total > tax THEN total - tax ELSE 0 END), 0) AS netSales,
+      COALESCE(SUM(cost_total), 0) AS costTotal, COUNT(*) AS invoiceCount
+    FROM sales WHERE status = 'active' AND ${range('date')}
+  `).get(from, from, to, to);
+  const saleReturns = db.prepare(`
+    SELECT COALESCE(SUM(sr.total), 0) AS total,
+      COALESCE(SUM(sri.quantity * si.purchase_price), 0) AS costTotal
+    FROM sales_returns sr
+    JOIN sales_return_items sri ON sri.return_id = sr.id
+    LEFT JOIN sale_items si ON si.id = sri.sale_item_id
+    WHERE sr.status = 'completed' AND ${range('sr.date')}
+  `).get(from, from, to, to);
+  const manual = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
+      COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS otherIncome
+    FROM cash_transactions
+    WHERE reference_type IS NULL AND ${range('date')}
+  `).get(from, from, to, to);
+  const netSales = Number(sales.netSales || 0) - Number(saleReturns.total || 0);
+  const costTotal = Number(sales.costTotal || 0) - Number(saleReturns.costTotal || 0);
+  const grossProfit = netSales - costTotal;
+  const expenses = Number(manual.expenses || 0);
+  const otherIncome = Number(manual.otherIncome || 0);
+  const netProfit = grossProfit + otherIncome - expenses;
+  const byDate = db.prepare(`
+    WITH dates AS (
+      SELECT date FROM sales WHERE status = 'active' AND ${range('date')}
+      UNION SELECT date FROM cash_transactions WHERE reference_type IS NULL AND ${range('date')}
+      UNION SELECT date FROM sales_returns WHERE status = 'completed' AND ${range('date')}
+    )
+    SELECT dates.date,
+      COALESCE((SELECT SUM(CASE WHEN total > tax THEN total-tax ELSE 0 END) FROM sales WHERE status='active' AND sales.date=dates.date), 0)
+        - COALESCE((SELECT SUM(total) FROM sales_returns WHERE status='completed' AND sales_returns.date=dates.date), 0) AS netSales,
+      COALESCE((SELECT SUM(cost_total) FROM sales WHERE status='active' AND sales.date=dates.date), 0)
+        - COALESCE((SELECT SUM(sri.quantity*si.purchase_price) FROM sales_return_items sri JOIN sales_returns sr ON sr.id=sri.return_id LEFT JOIN sale_items si ON si.id=sri.sale_item_id WHERE sr.status='completed' AND sr.date=dates.date), 0) AS costTotal,
+      COALESCE((SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS expenses
+    FROM dates ORDER BY dates.date
+  `).all(
+    from, from, to, to,
+    from, from, to, to,
+    from, from, to, to
+  );
+  return {
+    filters: { from, to },
+    salesNet: Number(sales.netSales || 0),
+    salesReturns: Number(saleReturns.total || 0),
+    netSales,
+    costTotal,
+    returnsCost: Number(saleReturns.costTotal || 0),
+    grossProfit,
+    expenses,
+    otherIncome,
+    netProfit,
+    invoiceCount: Number(sales.invoiceCount || 0),
+    byDate: byDate.map((row) => ({ ...row, netSales: Number(row.netSales || 0), costTotal: Number(row.costTotal || 0), expenses: Number(row.expenses || 0), grossProfit: Number(row.netSales || 0) - Number(row.costTotal || 0), netProfit: Number(row.netSales || 0) - Number(row.costTotal || 0) - Number(row.expenses || 0) }))
+  };
+}
+
+function closeDailyAccount(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('cash');
+  const date = normalizeInvoiceDate(payload.date);
+  const existing = db.prepare('SELECT id FROM daily_closures WHERE date = ?').get(date);
+  if (existing) throw new Error('این روز قبلاً بسته شده است.');
+  const cash = getCashSummary({ from: date, to: date });
+  const profit = getProfitLossReport({ from: date, to: date });
+  const previous = db.prepare('SELECT closing_balance AS closingBalance FROM daily_closures WHERE date < ? ORDER BY date DESC LIMIT 1').get(date);
+  const openingBalance = Number(previous?.closingBalance || 0);
+  const closingBalance = openingBalance + Number(cash.income || 0) - Number(cash.expense || 0);
+  const result = db.prepare(`
+    INSERT INTO daily_closures (date, user_id, opening_balance, cash_income, cash_expense, net_sales, profit_total, closing_balance, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(date, currentUserId || null, openingBalance, cash.income, cash.expense, profit.netSales, profit.netProfit, closingBalance, String(payload.notes || '').trim());
+  auditLog('daily.close', 'daily_closure', Number(result.lastInsertRowid), { date, closingBalance });
+  return getDailyClosure(Number(result.lastInsertRowid));
+}
+
+function getDailyClosure(id) {
+  const row = requireDatabase().prepare(`
+    SELECT dc.id, dc.date, dc.user_id AS userId, dc.opening_balance AS openingBalance,
+      dc.cash_income AS cashIncome, dc.cash_expense AS cashExpense,
+      dc.net_sales AS netSales, dc.profit_total AS profitTotal,
+      dc.closing_balance AS closingBalance, dc.notes, dc.created_at AS createdAt,
+      COALESCE(u.display_name, u.username, 'سیستم') AS userName
+    FROM daily_closures dc LEFT JOIN users u ON u.id = dc.user_id WHERE dc.id = ?
+  `).get(Number(id));
+  if (!row) throw new Error('بستن حساب روزانه پیدا نشد.');
+  return row;
+}
+
+function listDailyClosures(payload = {}) {
+  const db = requireDatabase();
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  return db.prepare(`
+    SELECT dc.id, dc.date, dc.user_id AS userId, dc.opening_balance AS openingBalance,
+      dc.cash_income AS cashIncome, dc.cash_expense AS cashExpense,
+      dc.net_sales AS netSales, dc.profit_total AS profitTotal,
+      dc.closing_balance AS closingBalance, dc.notes, dc.created_at AS createdAt,
+      COALESCE(u.display_name, u.username, 'سیستم') AS userName
+    FROM daily_closures dc LEFT JOIN users u ON u.id = dc.user_id
+    WHERE (? = '' OR dc.date >= ?) AND (? = '' OR dc.date <= ?)
+    ORDER BY dc.date DESC LIMIT 500
+  `).all(from, from, to, to);
+}
+
+function getPartyLedger(partyId, payload = {}) {
+  const db = requireDatabase();
+  const id = Number(partyId);
+  const party = db.prepare(`
+    SELECT id, code, trim(first_name || ' ' || COALESCE(last_name, '')) AS name,
+      party_type AS partyType, balance, phone, mobile, address
+    FROM parties WHERE id = ?
+  `).get(id);
+  if (!party) throw new Error('طرف‌حساب پیدا نشد.');
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  const events = [];
+  const inRange = (date) => (!from || date >= from) && (!to || date <= to);
+  const add = (date, kind, reference, referenceId, description, debit, credit) => {
+    if (inRange(date)) events.push({ date, kind, reference, referenceId, description, debit: Number(debit || 0), credit: Number(credit || 0) });
+  };
+  const sales = db.prepare(`SELECT id, invoice_number AS invoiceNumber, date, total, source FROM sales WHERE party_id = ? AND status = 'active' ORDER BY date, id`).all(id);
+  for (const row of sales) {
+    add(row.date, 'sale', row.invoiceNumber, row.id, row.source === 'daily' ? 'فروش روزانه' : 'فاکتور فروش', row.total, 0);
+    const payments = db.prepare('SELECT id, amount, paid_at AS paidAt, method FROM invoice_payments WHERE sale_id = ? ORDER BY id').all(row.id);
+    for (const payment of payments) add(String(payment.paidAt).slice(0, 10), 'payment', row.invoiceNumber, payment.id, `دریافت فروش (${payment.method})`, 0, payment.amount);
+  }
+  const saleReturns = db.prepare(`
+    SELECT sr.id, sr.return_number AS returnNumber, sr.date, sr.total
+    FROM sales_returns sr JOIN sales s ON s.id = sr.sale_id
+    WHERE s.party_id = ? AND sr.status = 'completed' ORDER BY sr.date, sr.id
+  `).all(id);
+  for (const row of saleReturns) add(row.date, 'sale_return', row.returnNumber, row.id, 'مرجوعی فروش', 0, row.total);
+  const purchases = db.prepare(`SELECT id, invoice_number AS invoiceNumber, date, total FROM purchases WHERE party_id = ? AND status = 'completed' ORDER BY date, id`).all(id);
+  for (const row of purchases) {
+    add(row.date, 'purchase', row.invoiceNumber, row.id, 'فاکتور خرید', 0, row.total);
+    const payments = db.prepare('SELECT id, amount, paid_at AS paidAt, method FROM invoice_payments WHERE purchase_id = ? ORDER BY id').all(row.id);
+    for (const payment of payments) add(String(payment.paidAt).slice(0, 10), 'payment', row.invoiceNumber, payment.id, `پرداخت خرید (${payment.method})`, payment.amount, 0);
+  }
+  const purchaseReturns = db.prepare(`
+    SELECT pr.id, pr.return_number AS returnNumber, pr.date, pr.total
+    FROM purchase_returns pr JOIN purchases p ON p.id = pr.purchase_id
+    WHERE p.party_id = ? AND pr.status = 'completed' ORDER BY pr.date, pr.id
+  `).all(id);
+  for (const row of purchaseReturns) add(row.date, 'purchase_return', row.returnNumber, row.id, 'مرجوعی خرید', row.total, 0);
+  events.sort((a, b) => a.date.localeCompare(b.date) || a.referenceId - b.referenceId);
+  let running = 0;
+  for (const event of events) {
+    running += event.debit - event.credit;
+    event.balance = running;
+  }
+  const debit = events.reduce((sum, event) => sum + event.debit, 0);
+  const credit = events.reduce((sum, event) => sum + event.credit, 0);
+  return { party, filters: { from, to }, openingBalance: 0, debit, credit, closingBalance: debit - credit, events };
+}
+
+function adjustProductStock(productId, payload = {}) {
+  const db = requireDatabase();
+  requirePermission('inventory');
+  const id = Number(productId);
+  const product = db.prepare('SELECT id, name, stock FROM products WHERE id = ?').get(id);
+  if (!product) throw new Error('کالا پیدا نشد.');
+  const mode = String(payload.mode || 'counted');
+  const value = Number(payload.stock ?? payload.quantity);
+  if (!Number.isFinite(value) || value < 0) throw new Error('موجودی اصلاحی باید عددی معتبر و غیرمنفی باشد.');
+  const current = Number(product.stock || 0);
+  const next = mode === 'delta' ? current + value : value;
+  const delta = next - current;
+  if (next < 0) throw new Error('موجودی نهایی نمی‌تواند منفی باشد.');
+  if (Math.abs(delta) < 1e-9) return getProduct(id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(next, id);
+    db.prepare(`
+      INSERT INTO stock_movements (product_id, type, quantity, reference_type, reference_id, description)
+      VALUES (?, 'adjustment', ?, 'manual', ?, ?)
+    `).run(id, delta, null, String(payload.reason || 'اصلاح موجودی').trim() || 'اصلاح موجودی');
+    db.exec('COMMIT');
+    auditLog('inventory.adjust', 'product', id, { previousStock: current, nextStock: next, delta, reason: payload.reason || '' });
+    return getProduct(id);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function listStockMovements(payload = {}) {
+  const db = requireDatabase();
+  const productId = Number(payload.productId || 0);
+  const from = String(payload.from || '').trim();
+  const to = String(payload.to || '').trim();
+  return db.prepare(`
+    SELECT sm.id, sm.product_id AS productId, p.name AS productName, p.code AS productCode,
+      sm.type, sm.quantity, sm.reference_type AS referenceType, sm.reference_id AS referenceId,
+      sm.description, sm.created_at AS createdAt
+    FROM stock_movements sm JOIN products p ON p.id = sm.product_id
+    WHERE (? = 0 OR sm.product_id = ?)
+      AND (? = '' OR substr(sm.created_at, 1, 10) >= ?)
+      AND (? = '' OR substr(sm.created_at, 1, 10) <= ?)
+    ORDER BY sm.id DESC LIMIT 1000
+  `).all(productId, productId, from, from, to, to);
+}
+
 function closeDatabase() {
   if (database) {
     database.close();
     database = undefined;
   }
+  currentUserId = null;
 }
 
 module.exports = {
@@ -1656,6 +2937,7 @@ module.exports = {
   createSale,
   getSalesReport,
   getDashboardSummary,
+  listNotifications,
   getDatabase,
   listCategories,
   listParties,
@@ -1673,7 +2955,43 @@ module.exports = {
   setProductActive,
   updateCategory,
   updateProduct,
-  updateProductQuick
+  updateProductQuick,
+  createSaleReturn,
+  getSaleReturnDetails,
+  listSalesReturns,
+  cancelSaleReturn,
+  createPurchaseReturn,
+  getPurchaseReturnDetails,
+  listPurchaseReturns,
+  cancelPurchaseReturn,
+  createCashTransaction,
+  getCashTransaction,
+  listCashTransactions,
+  getCashSummary,
+  getProfitLossReport,
+  closeDailyAccount,
+  getDailyClosure,
+  listDailyClosures,
+  getPartyLedger,
+  hashPassword,
+  auditLog,
+  setCurrentUser,
+  getCurrentUser,
+  createUser,
+  listUsers,
+  setUserActive,
+  loginUser,
+  resetAdminPassword,
+  logoutUser,
+  listAuditLogs,
+  listChecks,
+  updateCheckStatus,
+  createInstallmentPlan,
+  listInstallmentPlans,
+  recordInstallmentPayment,
+  changeCurrentUserPassword,
+  adjustProductStock,
+  listStockMovements
   ,previewProductImport
   ,importProducts
 };

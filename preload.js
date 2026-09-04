@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('appInfo', {
   name: 'Acclectron',
-  version: '1.0.0'
+  version: '1.0.2'
 });
 
 contextBridge.exposeInMainWorld('api', {
@@ -91,7 +91,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   purchases: {
     create: (payload) => ipcRenderer.invoke('purchases:create', payload),
-    list: (payload) => ipcRenderer.invoke('purchases:list', payload)
+    list: (payload) => ipcRenderer.invoke('purchases:list', payload),
+    priceHistory: (productId, payload) => ipcRenderer.invoke('purchases:price-history', productId, payload)
   },
   returns: {
     sale: {

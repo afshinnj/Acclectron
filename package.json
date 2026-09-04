@@ -1,7 +1,7 @@
 {
   "name": "accletron",
   "productName": "Acclectron",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "نرم‌افزار حسابداری دسکتاپ فارسی برای مدیریت فروش، خرید، انبار و دریافت‌ها",
   "keywords": [
     "electron",

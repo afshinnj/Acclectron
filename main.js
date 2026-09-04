@@ -36,11 +36,13 @@ const {
   updateProductQuick,
   previewProductImport,
   importProducts,
+  getCurrencyInputFactor,
   getAppSettings,
   saveAppSettings,
   getNextInvoiceNumber,
   listSales,
   listPurchases,
+  getPurchasePriceHistory,
   getInvoiceDetails,
   updateSale,
   settleInvoice,
@@ -244,8 +246,8 @@ function registerIpcHandlers() {
     const csvRows = [
       ['کد کالا', 'نام کالا', 'دسته‌بندی', 'بارکد', 'قیمت خرید', 'قیمت عمده', 'قیمت فروش', 'موجودی', 'حداقل موجودی', 'واحد', 'وضعیت'],
       ...rows.map((row) => [
-        row.code, row.name, row.categoryName, row.barcode, Math.round(Number(row.purchasePrice || 0) / 100),
-        Math.round(Number(row.wholesalePrice || 0) / 100), Math.round(Number(row.salePrice || 0) / 100),
+        row.code, row.name, row.categoryName, row.barcode, Math.round(Number(row.purchasePrice || 0) / 100 * getCurrencyInputFactor()),
+        Math.round(Number(row.wholesalePrice || 0) / 100 * getCurrencyInputFactor()), Math.round(Number(row.salePrice || 0) / 100 * getCurrencyInputFactor()),
         row.stock, row.minimumStock, row.unitName || row.unitSymbol, row.isActive ? 'فعال' : 'غیرفعال'
       ])
     ];
@@ -356,6 +358,7 @@ function registerIpcHandlers() {
   ipcMain.handle('purchases:create', (_event, payload) => createPurchase(payload));
   ipcMain.handle('sales:list', (_event, payload) => listSales(payload));
   ipcMain.handle('purchases:list', (_event, payload) => listPurchases(payload));
+  ipcMain.handle('purchases:price-history', (_event, productId, payload) => getPurchasePriceHistory(productId, payload));
   ipcMain.handle('invoices:next-number', (_event, kind, date) => getNextInvoiceNumber(kind, date));
   ipcMain.handle('invoices:details', (_event, kind, id) => getInvoiceDetails(kind, id));
   ipcMain.handle('invoices:update', (_event, kind, id, payload) => {

@@ -223,7 +223,7 @@ function renderDashboard(summary) {
   const payments = summary.paymentBreakdown || [];
   const paymentMax = Math.max(1, ...payments.map((row) => Number(row.amount || 0)));
   $('#dashboardPaymentsChart').innerHTML = payments.length ? payments.map((row) => `<div class="dashboard-bar-row"><span>${paymentLabels[row.method] || esc(row.method)}</span><div><i style="width:${Number(row.amount || 0) / paymentMax * 100}%"></i></div><b>${money(row.amount)}</b></div>`).join('') : '<div class="empty-state compact">پرداختی برای این ماه ثبت نشده است.</div>';
-  $('#dashboardRecentSales').innerHTML = (summary.recentSales || []).length ? summary.recentSales.map((row) => `<button class="dashboard-list-row" data-page="sales-invoices"><span><strong>${esc(row.invoiceNumber)}</strong><small>${esc(row.partyName || 'بدون طرف‌حساب')} · ${isoToJalali(row.date)}</small></span><b>${money(row.total)}</b></button>`).join('') : '<div class="empty-state compact">فروشی ثبت نشده است.</div>';
+  $('#dashboardRecentSales').innerHTML = (summary.recentSales || []).length ? summary.recentSales.map((row) => `<button class="dashboard-list-row" data-page="sales-invoices"><span><strong>${esc(row.invoiceNumber)}</strong><small>${row.source === 'daily' ? '<span class="daily-sale-party">فروش روزانه</span>' : esc(row.partyName || 'بدون طرف‌حساب')} · ${isoToJalali(row.date)}</small></span><b>${money(row.total)}</b></button>`).join('') : '<div class="empty-state compact">فروشی ثبت نشده است.</div>';
   $('#dashboardDebtors').innerHTML = (summary.topDebtors || []).length ? summary.topDebtors.map((row) => `<button class="dashboard-list-row" data-page="ledger"><span><strong>${esc(row.partyName)}</strong><small>مانده بدهی</small></span><b class="debt-amount">${money(row.balance)}</b></button>`).join('') : '<div class="empty-state compact">بدهی ثبت‌شده‌ای وجود ندارد.</div>';
   $('#dashboardProducts').innerHTML = (summary.topProducts || []).length ? summary.topProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${row.quantity} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
   document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
@@ -326,6 +326,7 @@ setPage('dashboard');
 /* Management screens are injected here so existing installations keep their
    original shell while gaining product/category CRUD without a migration. */
 const managementState = { ready: false, products: [], categories: [], units: [], parties: [] };
+let productModalInvoiceTarget = null;
 const saleState = { products: [], cart: [] };
 const invoiceState = {
   sale: { products: [], items: [], parties: [], party: null, payments: [], editingId: null, paymentDraft: { method: 'cash', amount: 0 } },
@@ -465,6 +466,7 @@ function initializeManagementMarkup() {
   document.body.insertAdjacentHTML('beforeend', `<div id="managementModalBackdrop" class="modal-backdrop hidden"><div id="productModal" class="modal hidden"><div class="modal-header"><div><span class="eyebrow">اطلاعات کالا</span><h3 id="productModalTitle">ثبت کالای جدید</h3></div><button class="modal-close" data-close-management>×</button></div><form id="productForm"><input id="productId" type="hidden"><div class="form-grid"><label>نام کالا *<input id="productName" required></label><label>کد کالا <input id="productCode" readonly placeholder="پس از انتخاب دسته‌بندی ساخته می‌شود"></label><label>بارکد<input id="productBarcode"></label><label>دسته‌بندی *<select id="productCategory" required><option value="">انتخاب دسته‌بندی</option></select></label><label>واحد<select id="productUnit"><option value="">انتخاب واحد</option></select></label><label>قیمت خرید<input id="productPurchasePrice" type="number" min="0"></label><label>قیمت عمده<input id="productWholesalePrice" type="number" min="0"></label><label>قیمت فروش *<input id="productRetailPrice" type="number" min="0" required></label><label>موجودی اولیه<input id="productStock" type="number" min="0" step="0.01" value="0"></label><label>حداقل موجودی<input id="productMinimumStock" type="number" min="0" step="0.01" value="0"></label></div><label>توضیحات<textarea id="productDescription" rows="3"></textarea></label><div id="productFormError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary" data-close-management>انصراف</button><button type="submit" class="primary">ذخیره کالا</button></div></form></div><div id="categoryModal" class="modal hidden"><div class="modal-header"><div><span class="eyebrow">ساختار کالاها</span><h3 id="categoryModalTitle">ثبت دسته‌بندی</h3></div><button class="modal-close" data-close-management>×</button></div><form id="categoryForm"><input id="categoryId" type="hidden"><label>کد دسته‌بندی *<input id="categoryCode" required inputmode="numeric" pattern="\\d{1,4}"></label><label>نام دسته‌بندی *<input id="categoryName" required></label><label>توضیحات<textarea id="categoryDescription" rows="4"></textarea></label><div id="categoryFormError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary" data-close-management>انصراف</button><button type="submit" class="primary">ذخیره دسته‌بندی</button></div></form></div></div>`);
   placeholder.insertAdjacentHTML('beforebegin', `<section id="partiesPage" class="page hidden"><div class="page-heading"><div><span class="eyebrow">مدیریت اشخاص</span><h2>طرف‌حساب‌ها</h2></div><button id="addParty" class="primary">＋ ثبت طرف‌حساب</button></div><div class="panel management-toolbar"><div class="toolbar-search"><span>⌕</span><input id="partiesFilter" placeholder="جست‌وجوی نام، کد یا شماره تماس"></div><select id="partyTypeFilter"><option value="">همه انواع</option><option value="customer">مشتری</option><option value="supplier">تأمین‌کننده</option><option value="both">هر دو</option></select><label class="check-label"><input id="showInactiveParties" type="checkbox"> نمایش غیرفعال‌ها</label></div><div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>کد</th><th>نام و نام خانوادگی</th><th>نوع</th><th>شماره تماس</th><th>آدرس</th><th>مانده</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="partiesTable"></tbody></table></div></div></section>`);
   $('#managementModalBackdrop').insertAdjacentHTML('beforeend', `<div id="partyModal" class="modal hidden"><div class="modal-header"><div><span class="eyebrow">اطلاعات طرف‌حساب</span><h3 id="partyModalTitle">ثبت طرف‌حساب جدید</h3></div><button class="modal-close" data-close-management>×</button></div><form id="partyForm"><input id="partyId" type="hidden"><div class="form-grid"><label>نام *<input id="partyFirstName" required></label><label>نام خانوادگی<input id="partyLastName"></label><label>شماره تماس<input id="partyPhone" inputmode="tel"></label><label>شماره همراه<input id="partyMobile" inputmode="tel"></label><label>نوع طرف‌حساب *<select id="partyType" required><option value="customer">مشتری</option><option value="supplier">تأمین‌کننده</option><option value="both">هر دو</option></select></label></div><label>آدرس<textarea id="partyAddress" rows="3"></textarea></label><label>توضیحات<textarea id="partyDescription" rows="3"></textarea></label><div id="partyFormError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary" data-close-management>انصراف</button><button type="submit" class="primary">ذخیره طرف‌حساب</button></div></form></div>`);
+  $('#productForm .modal-actions')?.insertAdjacentHTML('beforebegin', `<section id="productPurchaseHistory" class="product-purchase-history hidden"><div class="product-purchase-history-heading"><div><h4>سوابق خرید کالا</h4><small id="productPurchaseHistorySummary"></small></div></div><div class="table-wrap"><table><thead><tr><th>تاریخ</th><th>تأمین‌کننده</th><th>فاکتور</th><th>تعداد</th><th>قیمت واحد</th><th>تخفیف</th><th>قیمت خالص</th></tr></thead><tbody id="productPurchaseHistoryRows"></tbody></table></div></section>`);
   const nav = document.querySelector('nav');
   const productsButton = nav?.querySelector('[data-page="products"]');
   if (productsButton && !nav.querySelector('.product-menu')) {
@@ -527,7 +529,7 @@ function initializeSidebarGroups() {
 function initializeSalesMarkup() {
   const page = $('#salesPage');
   if (!page || page.dataset.redesigned) return;
-  page.innerHTML = `<div class="page-heading"><div><span class="eyebrow">عملیات فروش</span></div><label class="sale-date-field">تاریخ فروش<input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>لیست محصولات</h3><small>برای افزودن، یکی از قیمت‌ها را انتخاب کنید.</small></div><div class="toolbar-search"><span>⌕</span><input id="saleProductFilter" placeholder="جست‌وجوی محصول"></div></div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th>قیمت</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-total"><span>مبلغ کل</span><strong id="modernSaleTotal">${money(0)}</strong></div><div id="modernSaleError" class="form-error hidden"></div><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش</button></aside></div>`;
+  page.innerHTML = `<div class="page-heading"><div><span class="eyebrow">عملیات فروش</span></div><label class="sale-date-field daily-sale-date-field"><span class="sale-date-caption"><i aria-hidden="true">◷</i>تاریخ فروش</span><input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>لیست محصولات</h3><small>برای افزودن، یکی از قیمت‌ها را انتخاب کنید.</small></div><div class="toolbar-search"><span>⌕</span><input id="saleProductFilter" placeholder="جست‌وجوی محصول"></div></div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th>قیمت</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-total"><span>مبلغ کل</span><strong id="modernSaleTotal">${money(0)}</strong></div><div id="modernSaleError" class="form-error hidden"></div><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش</button></aside></div>`;
   $('#saleDate').value = new Date().toISOString().slice(0, 10);
   page.dataset.redesigned = '1';
   bindSalesEvents();
@@ -576,13 +578,22 @@ function setManagedPage(page) {
   if (page === 'products') loadManagedProducts(); if (page === 'categories') loadManagedCategories(); if (page === 'customers') loadManagedParties();
 }
 
-function openManagementModal(kind, record = null) {
+function openManagementModal(kind, record = null, options = {}) {
   initializeManagementMarkup();
+  productModalInvoiceTarget = kind === 'product' && !record && options.invoiceTarget
+    ? { kind: options.invoiceTarget.kind, index: Number(options.invoiceTarget.index) }
+    : null;
   $('#managementModalBackdrop').classList.remove('hidden'); $('#productModal').classList.toggle('hidden', kind !== 'product'); $('#categoryModal').classList.toggle('hidden', kind !== 'category'); $('#partyModal').classList.toggle('hidden', kind !== 'party');
   if (kind === 'product') {
     $('#productModalTitle').textContent = record ? 'ویرایش کالا' : 'ثبت کالای جدید'; $('#productId').value = record?.id || '';
     [['productName', record?.name], ['productCode', record?.code], ['productBarcode', record?.barcode], ['productPurchasePrice', record ? (record.purchasePrice / 100) * currencyFactor() : 0], ['productWholesalePrice', record ? (record.wholesalePrice / 100) * currencyFactor() : 0], ['productRetailPrice', record ? (record.salePrice / 100) * currencyFactor() : 0], ['productStock', record?.stock ?? 0], ['productMinimumStock', record?.minimumStock ?? 0], ['productDescription', record?.description || '']].forEach(([id, value]) => { $(`#${id}`).value = value ?? ''; });
-    $('#productCategory').value = record?.categoryId || ''; $('#productUnit').value = record?.unitId || ''; if (!record) updateProductCodePreview(); $('#productName').focus();
+    $('#productCategory').value = record?.categoryId || ''; $('#productUnit').value = record?.unitId || '';
+    syncProductLookupValues();
+    const stockField = $('#productStock')?.closest('label');
+    stockField?.classList.toggle('hidden', Boolean(productModalInvoiceTarget));
+    if (productModalInvoiceTarget) $('#productStock').value = '0';
+    loadProductPurchaseHistory(record?.id);
+    if (!record) updateProductCodePreview(); $('#productName').focus();
   } else if (kind === 'category') {
     $('#categoryModalTitle').textContent = record ? 'ویرایش دسته‌بندی' : 'ثبت دسته‌بندی'; $('#categoryId').value = record?.id || ''; $('#categoryCode').value = record?.code || ''; $('#categoryName').value = record?.name || ''; $('#categoryDescription').value = record?.description || ''; $('#categoryCode').focus();
   } else {
@@ -600,7 +611,129 @@ function openManagementModal(kind, record = null) {
 }
 
 function closeManagementModal() { $('#managementModalBackdrop').classList.add('hidden'); }
-function renderProductOptions() { $('#productCategory').innerHTML = '<option value="">بدون دسته‌بندی</option>' + managementState.categories.filter((c) => c.isActive).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); $('#productCategoryFilter').innerHTML = '<option value="">همه دسته‌بندی‌ها</option>' + managementState.categories.filter((c) => c.isActive).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); $('#productUnit').innerHTML = '<option value="">انتخاب واحد</option>' + managementState.units.map((u) => `<option value="${u.id}">${esc(u.name)}${u.symbol ? ` (${esc(u.symbol)})` : ''}</option>`).join(''); }
+async function loadProductPurchaseHistory(productId) {
+  const section = $('#productPurchaseHistory');
+  const summary = $('#productPurchaseHistorySummary');
+  const rows = $('#productPurchaseHistoryRows');
+  if (!section || !summary || !rows) return;
+  if (!productId) {
+    section.classList.add('hidden');
+    section.dataset.productId = '';
+    return;
+  }
+  section.dataset.productId = String(productId);
+  section.classList.remove('hidden');
+  summary.textContent = 'در حال دریافت سوابق…';
+  rows.innerHTML = '<tr class="empty-row"><td colspan="7">در حال دریافت سوابق خرید…</td></tr>';
+  try {
+    const history = await window.api.purchases.priceHistory(productId, { limit: 50 });
+    if (section.dataset.productId !== String(productId)) return;
+    const data = history.items || [];
+    const stats = history.summary || {};
+    summary.textContent = data.length
+      ? `${stats.count || data.length} سابقه · کمینه ${money(stats.minUnitPrice)} · بیشینه ${money(stats.maxUnitPrice)} · میانگین خالص ${money(stats.averageEffectiveUnitPrice)}`
+      : 'برای این کالا سابقهٔ خرید فعال ثبت نشده است.';
+    rows.innerHTML = data.length ? data.map((row) => `<tr><td>${isoToJalali(row.date)}</td><td>${esc(row.supplierName)}</td><td>${esc(row.invoiceNumber)}</td><td>${Number(row.quantity || 0)}${Number(row.returnedQuantity || 0) ? `<small>${Number(row.returnedQuantity)} مرجوعی</small>` : ''}</td><td>${money(row.unitPrice)}</td><td>${money(row.discount)}</td><td><strong>${money(row.effectiveUnitPrice)}</strong></td></tr>`).join('') : '<tr class="empty-row"><td colspan="7">سابقه‌ای برای نمایش وجود ندارد.</td></tr>';
+  } catch (error) {
+    if (section.dataset.productId !== String(productId)) return;
+    summary.textContent = '';
+    rows.innerHTML = `<tr class="empty-row"><td colspan="7">${esc(readableError(error, 'سوابق خرید بارگذاری نشد.'))}</td></tr>`;
+  }
+}
+async function openProductForInvoice(kind, index) {
+  try {
+    const [categories, units] = await Promise.all([
+      window.api.categories.list(true),
+      window.api.units.list()
+    ]);
+    managementState.categories = categories;
+    managementState.units = units;
+    renderProductOptions();
+  } catch {
+    // The regular form error will explain a missing required category if the
+    // database refresh is unavailable.
+  }
+  openManagementModal('product', null, { invoiceTarget: { kind, index } });
+}
+function updateProductSellingPrices() {
+  const purchase = number($('#productPurchasePrice')?.value || 0);
+  // Selling prices are rounded upward to the nearest whole visible currency unit.
+  $('#productWholesalePrice').value = purchase > 0 ? Math.ceil(purchase * 1.2) : 0;
+  $('#productRetailPrice').value = purchase > 0 ? Math.ceil(purchase * 1.3) : 0;
+}
+function normalizeProductLookupText(value) {
+  return normalizeDigits(String(value ?? '').trim().toLowerCase())
+    .replace(/ي/g, 'ی').replace(/ى/g, 'ی').replace(/ك/g, 'ک');
+}
+function productLookupItems(selectId) {
+  if (selectId === 'productCategory') {
+    return managementState.categories.filter((category) => category.isActive)
+      .map((category) => ({ id: category.id, name: category.name, label: category.name }));
+  }
+  return managementState.units.map((unit) => ({
+    id: unit.id,
+    name: unit.name,
+    label: `${unit.name}${unit.symbol ? ` (${unit.symbol})` : ''}`
+  }));
+}
+function syncProductLookupValues() {
+  [['productCategory', 'productCategorySearch'], ['productUnit', 'productUnitSearch']].forEach(([selectId, inputId]) => {
+    const select = $(`#${selectId}`);
+    const input = $(`#${inputId}`);
+    if (!select || !input) return;
+    const item = productLookupItems(selectId).find((option) => String(option.id) === String(select.value));
+    input.value = item?.label || '';
+  });
+}
+function initializeProductLookups() {
+  [['productCategory', 'productCategorySearch', 'productCategoryOptions', 'جست‌وجوی دسته‌بندی...'],
+    ['productUnit', 'productUnitSearch', 'productUnitOptions', 'جست‌وجوی واحد...']].forEach(([selectId, inputId, datalistId, placeholder]) => {
+    const select = $(`#${selectId}`);
+    if (!select || $(`#${inputId}`)) return;
+    const input = document.createElement('input');
+    input.id = inputId;
+    input.type = 'search';
+    input.setAttribute('list', datalistId);
+    input.setAttribute('autocomplete', 'off');
+    input.placeholder = placeholder;
+    input.className = 'product-lookup-input';
+    select.parentElement.insertBefore(input, select);
+    select.hidden = true;
+    const datalist = document.createElement('datalist');
+    datalist.id = datalistId;
+    select.parentElement.appendChild(datalist);
+    input.addEventListener('input', () => {
+      const query = normalizeProductLookupText(input.value);
+      const options = productLookupItems(selectId);
+      const match = query
+        ? (options.find((option) => normalizeProductLookupText(option.name).startsWith(query))
+          || options.find((option) => normalizeProductLookupText(option.label).includes(query)))
+        : null;
+      select.value = match ? String(match.id) : '';
+      if (match && query && normalizeProductLookupText(input.value) !== normalizeProductLookupText(match.label)) {
+        input.value = match.label;
+        input.select();
+      }
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { input.value = ''; select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+  });
+}
+function renderProductOptions() {
+  const categories = managementState.categories.filter((c) => c.isActive);
+  const units = managementState.units;
+  $('#productCategory').innerHTML = '<option value="">بدون دسته‌بندی</option>' + categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('#productCategoryFilter').innerHTML = '<option value="">همه دسته‌بندی‌ها</option>' + categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('#productUnit').innerHTML = '<option value="">انتخاب واحد</option>' + units.map((u) => `<option value="${u.id}">${esc(u.name)}${u.symbol ? ` (${esc(u.symbol)})` : ''}</option>`).join('');
+  [['productCategoryOptions', categories.map((c) => c.name)],
+    ['productUnitOptions', units.map((u) => `${u.name}${u.symbol ? ` (${u.symbol})` : ''}`)]].forEach(([id, values]) => {
+    const list = $(`#${id}`);
+    if (list) list.innerHTML = values.map((value) => `<option value="${esc(value)}"></option>`).join('');
+  });
+  syncProductLookupValues();
+}
 function updateProductCodePreview() { const category = managementState.categories.find((c) => String(c.id) === String($('#productCategory')?.value)); if (category) $('#productCode').value = `${category.code}001`; else $('#productCode').value = ''; }
 function renderManagedProducts() { const term = ($('#productsFilter')?.value || '').trim().toLowerCase(); const category = $('#productCategoryFilter')?.value || ''; const includeInactive = $('#showInactiveProducts')?.checked; const rows = managementState.products.filter((p) => (includeInactive || p.isActive) && (!category || String(p.categoryId) === category) && (!term || [p.name, p.code, p.barcode].some((v) => String(v || '').toLowerCase().includes(term)))); $('#productsTable').innerHTML = rows.length ? rows.map((p) => `<tr class="${p.isActive ? '' : 'muted-row'}"><td>${esc(p.code)}</td><td><strong>${esc(p.name)}</strong>${p.barcode ? `<small>${esc(p.barcode)}</small>` : ''}</td><td>${esc(p.categoryName || '—')}</td><td>${money(p.salePrice)}</td><td>${new Intl.NumberFormat('fa-IR').format(p.stock)}${p.stock <= p.minimumStock ? '<span class="stock-warning">کم</span>' : ''}</td><td>${esc(p.unitSymbol || p.unitName || '—')}</td><td><span class="status-badge ${p.isActive ? 'active' : 'inactive'}">${p.isActive ? 'فعال' : 'غیرفعال'}</span></td><td><button class="table-action edit-product" data-id="${p.id}">ویرایش</button><button class="table-action danger toggle-product" data-id="${p.id}" data-active="${p.isActive}">${p.isActive ? 'غیرفعال‌سازی' : 'فعال‌سازی'}</button></td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">کالایی برای نمایش وجود ندارد.</td></tr>'; }
 function renderManagedCategories() { const term = ($('#categoriesFilter')?.value || '').trim().toLowerCase(); const includeInactive = $('#showInactiveCategories')?.checked; const rows = managementState.categories.filter((c) => (includeInactive || c.isActive) && (!term || `${c.code} ${c.name}`.toLowerCase().includes(term))); $('#categoriesTable').innerHTML = rows.length ? rows.map((c) => `<tr class="${c.isActive ? '' : 'muted-row'}"><td><strong>${esc(c.code)}</strong></td><td><strong>${esc(c.name)}</strong></td><td>${esc(c.description || '—')}</td><td>${new Intl.NumberFormat('fa-IR').format(c.productCount || 0)}</td><td><span class="status-badge ${c.isActive ? 'active' : 'inactive'}">${c.isActive ? 'فعال' : 'غیرفعال'}</span></td><td><button class="table-action edit-category" data-id="${c.id}">ویرایش</button><button class="table-action danger toggle-category" data-id="${c.id}" data-active="${c.isActive}">${c.isActive ? 'غیرفعال‌سازی' : 'فعال‌سازی'}</button></td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">دسته‌بندی‌ای برای نمایش وجود ندارد.</td></tr>'; }
@@ -610,9 +743,10 @@ async function loadManagedCategories() { managementState.categories = await wind
 async function loadManagedParties() { managementState.parties = await window.api.customers.list({ query: '', type: '', includeInactive: true }); renderManagedParties(); }
 
 function bindManagementEvents() {
-  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]') || event.target.id === 'managementModalBackdrop') closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openManagementModal('product', managementState.products.find((p) => p.id === Number(editProduct.dataset.id))); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
-  ['productsFilter', 'productCategoryFilter', 'showInactiveProducts'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedProducts)); ['categoriesFilter', 'showInactiveCategories'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedCategories)); ['partiesFilter', 'partyTypeFilter', 'showInactiveParties'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedParties)); $('#productCategory').addEventListener('change', updateProductCodePreview);
-  $('#productForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#productFormError'); error.classList.add('hidden'); const payload = { name: $('#productName').value, code: $('#productCode').value, barcode: $('#productBarcode').value, categoryId: $('#productCategory').value, unitId: $('#productUnit').value, purchasePrice: parsePriceInput($('#productPurchasePrice').value), wholesalePrice: parsePriceInput($('#productWholesalePrice').value), retailPrice: parsePriceInput($('#productRetailPrice').value), stock: Number($('#productStock').value || 0), minimumStock: Number($('#productMinimumStock').value || 0), description: $('#productDescription').value }; try { const id = $('#productId').value; if (id) await window.api.products.update(Number(id), payload); else await window.api.products.create(payload); closeManagementModal(); showToast(id ? 'کالا با موفقیت ویرایش شد.' : 'کالا با موفقیت ثبت شد.'); await loadManagedProducts(); } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
+  initializeProductLookups();
+  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } const invoiceProduct = event.target.closest('.invoice-new-product'); if (invoiceProduct) { const kind = invoiceProduct.dataset.kind; const emptyRow = invoiceState[kind].items.findIndex((item) => !item.productId); openProductForInvoice(kind, emptyRow >= 0 ? emptyRow : invoiceState[kind].items.length - 1); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]') || event.target.id === 'managementModalBackdrop') closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openManagementModal('product', managementState.products.find((p) => p.id === Number(editProduct.dataset.id))); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
+  ['productsFilter', 'productCategoryFilter', 'showInactiveProducts'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedProducts)); ['categoriesFilter', 'showInactiveCategories'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedCategories)); ['partiesFilter', 'partyTypeFilter', 'showInactiveParties'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedParties)); $('#productCategory').addEventListener('change', updateProductCodePreview); $('#productPurchasePrice').addEventListener('input', updateProductSellingPrices);
+  $('#productForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#productFormError'); error.classList.add('hidden'); const payload = { name: $('#productName').value, code: $('#productCode').value, barcode: $('#productBarcode').value, categoryId: $('#productCategory').value, unitId: $('#productUnit').value, purchasePrice: parsePriceInput($('#productPurchasePrice').value), wholesalePrice: parsePriceInput($('#productWholesalePrice').value), retailPrice: parsePriceInput($('#productRetailPrice').value), stock: productModalInvoiceTarget ? 0 : Number($('#productStock').value || 0), minimumStock: Number($('#productMinimumStock').value || 0), description: $('#productDescription').value }; try { const id = $('#productId').value; const saved = id ? await window.api.products.update(Number(id), payload) : await window.api.products.create(payload); const target = productModalInvoiceTarget; closeManagementModal(); productModalInvoiceTarget = null; showToast(id ? 'کالا با موفقیت ویرایش شد.' : 'کالا با موفقیت ثبت شد.'); await loadManagedProducts(); if (!id && target?.kind && Number.isInteger(target.index)) { await loadKeyboardInvoice(target.kind); const product = invoiceState[target.kind].products.find((item) => item.id === Number(saved?.id)); if (product) chooseKeyboardProduct(target.kind, target.index, product); } } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
   $('#categoryForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#categoryFormError'); error.classList.add('hidden'); const payload = { code: $('#categoryCode').value, name: $('#categoryName').value, description: $('#categoryDescription').value }; try { const id = $('#categoryId').value; if (id) await window.api.categories.update(Number(id), payload); else await window.api.categories.create(payload); closeManagementModal(); showToast(id ? 'دسته‌بندی با موفقیت ویرایش شد.' : 'دسته‌بندی با موفقیت ثبت شد.'); await loadManagedCategories(); } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
   $('#partyForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#partyFormError'); error.classList.add('hidden'); const payload = { firstName: $('#partyFirstName').value, lastName: $('#partyLastName').value, phone: $('#partyPhone').value, mobile: $('#partyMobile').value, address: $('#partyAddress').value, partyType: $('#partyType').value, description: $('#partyDescription').value }; try { const id = $('#partyId').value; if (id) await window.api.customers.update(Number(id), payload); else await window.api.customers.create(payload); closeManagementModal(); showToast(id ? 'طرف‌حساب با موفقیت ویرایش شد.' : 'طرف‌حساب با موفقیت ثبت شد.'); await loadManagedParties(); } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeManagementModal(); });
@@ -1199,7 +1333,7 @@ function invoiceMarkup(kind) {
   const sale = kind === 'sale';
   const id = sale ? 'sale' : 'purchase';
   return `<div class="page-heading"><div><span class="eyebrow">عملیات ${sale ? 'فروش' : 'خرید'}</span><h2>فاکتور ${sale ? 'فروش' : 'خرید'}</h2></div><label class="sale-date-field">تاریخ<input class="invoice-date" id="${id}Date" type="date"></label></div>
-  <div class="invoice-layout"><section class="panel invoice-editor"><div class="invoice-toolbar"><label>${sale ? 'مشتری' : 'تأمین‌کننده'}<input class="party-input" data-kind="${kind}" id="${id}Party" placeholder="جست‌وجو..." autocomplete="off"><div class="party-suggestions hidden" id="${id}PartySuggestions"></div></label><button type="button" class="secondary invoice-new-row" data-kind="${kind}">＋ ردیف جدید</button></div>
+  <div class="invoice-layout"><section class="panel invoice-editor"><div class="invoice-toolbar"><label>${sale ? 'مشتری' : 'تأمین‌کننده'}<input class="party-input" data-kind="${kind}" id="${id}Party" placeholder="جست‌وجو..." autocomplete="off"><div class="party-suggestions hidden" id="${id}PartySuggestions"></div></label><button type="button" class="secondary invoice-new-row" data-kind="${kind}">＋ ردیف جدید</button>${kind === 'purchase' ? '<button type="button" class="secondary invoice-new-product" data-kind="purchase">＋ ثبت کالای جدید</button>' : ''}</div>
   <div class="table-wrap invoice-table-wrap"><table class="invoice-table"><thead><tr><th>محصول</th><th>تعداد</th><th>قیمت واحد</th><th>تخفیف</th><th>مبلغ کل</th><th></th></tr></thead><tbody id="${id}InvoiceItems"></tbody></table></div>
   <div id="${id}InvoiceError" class="form-error hidden"></div><div class="shortcut-guide"><span>راهنما</span><kbd>↑↓</kbd> پیمایش <kbd>Enter</kbd> انتخاب/مرحله بعد <kbd>Tab</kbd> پرداخت <kbd>Ctrl+Delete</kbd> حذف ردیف <kbd>Ctrl+Enter</kbd> ثبت <kbd>Esc</kbd> بستن پیشنهادها</div></section>
   <aside class="panel invoice-summary"><h3>خلاصه فاکتور</h3><div class="summary-lines"><div><span>جمع کالاها</span><strong id="${id}Subtotal">${money(0)}</strong></div><div><span>تخفیف</span><input class="money-input invoice-discount" id="${id}Discount" value="0" inputmode="decimal"></div><div><span>مالیات</span><input class="money-input invoice-tax" id="${id}Tax" value="0" inputmode="decimal"></div><div class="grand-total"><span>مبلغ نهایی</span><strong id="${id}Total">${money(0)}</strong></div></div>
@@ -1207,7 +1341,11 @@ function invoiceMarkup(kind) {
 }
 
 function newInvoiceItem(kind) {
-  return { query: '', productId: null, name: '', code: '', stock: 0, quantity: 1, unitPrice: 0, discount: 0, priceType: kind === 'sale' ? 'retail' : 'purchase' };
+  return {
+    query: '', productId: null, name: '', code: '', stock: 0, quantity: 1, unitPrice: 0, discount: 0,
+    priceType: kind === 'sale' ? 'retail' : 'purchase', purchasePriceOptions: [],
+    purchasePriceOpen: false, purchasePriceActiveIndex: -1
+  };
 }
 
 function enhanceInvoiceMeta(kind, page) {
@@ -1449,6 +1587,7 @@ async function loadKeyboardInvoice(kind) {
   state.parties = (await window.api.customers.list({ query: '', type: '', includeInactive: false }))
     .filter((party) => party.partyType === (kind === 'sale' ? 'customer' : 'supplier') || party.partyType === 'both');
   if (!state.items.length) state.items = [newInvoiceItem(kind)];
+  if (kind === 'purchase' && state.items[0]?.productId) state.items.unshift(newInvoiceItem('purchase'));
   const numberField = $(`#${kind}InvoiceNumber`);
   if (numberField && !numberField.value) numberField.value = await window.api.invoices.nextNumber(kind, jalaliInputToIso($(`#${kind}Date`).value));
   renderKeyboardItems(kind); renderKeyboardSummary(kind);
@@ -1460,13 +1599,160 @@ async function loadKeyboardInvoice(kind) {
 
 function renderKeyboardItems(kind, focus) {
   const state = invoiceState[kind]; const body = $(`#${kind}InvoiceItems`);
-  body.innerHTML = state.items.map((item, index) => `<tr data-index="${index}"><td class="product-cell"><input class="invoice-product-input" data-kind="${kind}" data-index="${index}" value="${esc(item.query || item.name)}" placeholder="نام، کد یا بارکد" autocomplete="off"><div class="invoice-suggestions hidden"></div>${item.name ? `<small>${esc(item.code)} · موجودی ${item.stock}</small>` : ''}</td><td><input class="invoice-quantity" data-kind="${kind}" data-index="${index}" type="number" min="1" step="1" value="${Math.max(1, Math.round(Number(item.quantity) || 1))}"></td><td class="price-cell"><select class="invoice-price-combo" data-kind="${kind}" data-index="${index}"><option value="retail" ${item.priceType === 'retail' ? 'selected' : ''}>فروش — ${money(item.retailPrice || item.unitPrice)}</option><option value="wholesale" ${item.priceType === 'wholesale' ? 'selected' : ''} ${item.wholesalePrice > 0 ? '' : 'disabled'}>عمده — ${money(item.wholesalePrice || 0)}</option>${kind === 'purchase' ? `<option value="purchase" ${item.priceType === 'purchase' ? 'selected' : ''}>خرید — ${money(item.purchasePrice || item.unitPrice)}</option>` : ''}<option value="custom" ${!['retail', 'wholesale', 'purchase'].includes(item.priceType) ? 'selected' : ''}>قیمت دستی</option></select><input class="invoice-price-custom ${['retail', 'wholesale', 'purchase'].includes(item.priceType) ? 'hidden' : ''}" data-kind="${kind}" data-index="${index}" type="text" inputmode="decimal" value="${formatPriceInput(item.unitPrice)}" placeholder="قیمت دستی"></td><td><input class="invoice-discount-line" data-kind="${kind}" data-index="${index}" type="text" inputmode="decimal" value="${formatPriceInput(item.discount)}"></td><td class="line-total" tabindex="0">${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-kind="${kind}" data-index="${index}" title="حذف">×</button></td></tr>`).join('');
+  body.innerHTML = state.items.map((item, index) => {
+    const hasEntryRow = kind === 'purchase' || (kind === 'sale' && !state.editingId);
+    if (hasEntryRow && index > 0) {
+      return `<tr class="invoice-committed-row" data-index="${index}"><td><strong>${esc(item.name)}</strong><small>${esc(item.code)}</small></td><td>${Math.max(1, Math.round(Number(item.quantity) || 1))}</td><td>${money(item.unitPrice)}</td><td>${money(item.discount)}</td><td class="line-total">${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-kind="${kind}" data-index="${index}" title="حذف">×</button></td></tr>`;
+    }
+    return `<tr class="${hasEntryRow ? 'invoice-entry-row' : ''}" data-index="${index}"><td class="product-cell"><input class="invoice-product-input" data-kind="${kind}" data-index="${index}" value="${esc(item.query || item.name)}" placeholder="نام، کد یا بارکد" autocomplete="off"><div class="invoice-suggestions hidden"></div>${item.name ? `<small>${esc(item.code)} · موجودی ${item.stock}</small>` : ''}</td><td><input class="invoice-quantity" data-kind="${kind}" data-index="${index}" type="number" min="1" step="1" value="${Math.max(1, Math.round(Number(item.quantity) || 1))}"></td>${invoicePriceFieldMarkup(kind, item, index)}<td><input class="invoice-discount-line" data-kind="${kind}" data-index="${index}" type="text" inputmode="decimal" value="${formatPriceInput(item.discount)}"></td><td class="line-total" tabindex="0">${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-kind="${kind}" data-index="${index}" title="حذف">×</button></td></tr>`;
+  }).join('');
+  if (kind === 'purchase') {
+    state.items.forEach((item, index) => {
+      const row = body.querySelector(`tr[data-index="${index}"]`);
+      if (!row?.classList.contains('invoice-entry-row')) return;
+      row?.querySelector('.product-cell > small')?.remove();
+      const priceCell = row.querySelector('.price-cell');
+      priceCell?.replaceChildren();
+      priceCell?.insertAdjacentHTML('afterbegin', purchasePriceFieldMarkup(item, index));
+    });
+    body.querySelector('tr[data-index="0"] .delete-line')?.remove();
+  }
   if (focus) { const node = body.querySelector(`[data-index="${focus.index}"] .${focus.className}`); if (node) { node.focus(); node.select?.(); } }
+}
+
+function invoicePriceFieldMarkup(kind, item, index) {
+  if (kind === 'purchase') return '<td class="price-cell"></td>';
+  const isCustom = item.priceType === 'custom';
+  return `<td class="price-cell"><select class="invoice-price-combo" data-kind="${kind}" data-index="${index}"><option value="retail" ${item.priceType === 'retail' ? 'selected' : ''}>قیمت فروش — ${money(item.retailPrice || item.unitPrice)}</option><option value="wholesale" ${item.priceType === 'wholesale' ? 'selected' : ''} ${item.wholesalePrice > 0 ? '' : 'disabled'}>فروش عمده — ${money(item.wholesalePrice || 0)}</option><option value="custom" ${isCustom ? 'selected' : ''}>قیمت دستی</option></select><input class="invoice-price-custom ${isCustom ? '' : 'hidden'}" data-kind="${kind}" data-index="${index}" type="text" inputmode="decimal" value="${formatPriceInput(item.unitPrice)}" placeholder="قیمت دستی"></td>`;
+}
+
+function setInvoicePriceSelection(kind, index, value, options = {}) {
+  const item = invoiceState[kind]?.items[index];
+  const row = $(`#${kind}InvoiceItems tr[data-index="${index}"]`);
+  const combo = row?.querySelector('.invoice-price-combo');
+  const custom = row?.querySelector('.invoice-price-custom');
+  if (!item || !combo || !custom) return;
+  item.priceType = value;
+  combo.value = value;
+  if (value === 'custom') {
+    item.unitPrice = options.keepValue ? Number(item.unitPrice || 0) : 0;
+    custom.classList.remove('hidden');
+    if (!options.keepValue) custom.value = '';
+    if (options.focus !== false) requestAnimationFrame(() => { custom.focus(); custom.select?.(); });
+  } else {
+    item.unitPrice = value === 'wholesale' ? Number(item.wholesalePrice || 0) : Number(item.retailPrice || 0);
+    custom.value = '';
+    custom.classList.add('hidden');
+    if (options.focus) requestAnimationFrame(() => combo.focus());
+  }
+  renderKeyboardSummary(kind);
+}
+
+function purchasePriceFieldMarkup(item, index) {
+  return `<div class="purchase-price-entry"><input class="invoice-price-custom purchase-price-input" data-kind="purchase" data-index="${index}" type="text" inputmode="decimal" value="${formatPriceInput(item.unitPrice)}" placeholder="قیمت خرید"><div class="purchase-price-suggestions hidden" data-index="${index}">${purchasePriceSuggestionsMarkup(item, index)}</div></div>`;
+}
+
+function purchasePriceSuggestionsMarkup(item, index) {
+  const options = item.purchasePriceOptions || [];
+  if (!options.length) return '<div class="purchase-price-empty">قیمت خرید قبلی ثبت نشده است.</div>';
+  return options.map((row, optionIndex) => `<button type="button" class="purchase-price-option ${item.purchasePriceActiveIndex === optionIndex ? 'active' : ''}" data-index="${index}" data-option-index="${optionIndex}"><span>${money(row.effectiveUnitPrice)}</span><small>${isoToJalali(row.date)}${row.supplierName ? ` · ${esc(row.supplierName)}` : ''}</small></button>`).join('');
+}
+
+function renderPurchasePriceSuggestions(item, index) {
+  const row = $(`#purchaseInvoiceItems tr[data-index="${index}"]`);
+  const box = row?.querySelector('.purchase-price-suggestions');
+  if (!box) return;
+  box.innerHTML = purchasePriceSuggestionsMarkup(item, index);
+  box.classList.toggle('hidden', !item.purchasePriceOpen);
+}
+
+function openPurchasePriceSuggestions(index) {
+  const item = invoiceState.purchase.items[index];
+  if (!item) return;
+  item.purchasePriceOpen = true;
+  item.purchasePriceActiveIndex = -1;
+  renderPurchasePriceSuggestions(item, index);
+}
+
+function purchaseHistoryMarkup(item, index) {
+  const history = item.purchaseHistory;
+  const count = Number(history?.summary?.count || 0);
+  const loading = Boolean(history?.loading);
+  const buttonLabel = loading ? 'در حال دریافت سوابق…' : `سوابق خرید${count ? ` (${count})` : ''}`;
+  const panel = item.purchaseHistoryOpen
+    ? `<div class="purchase-history-panel">${purchaseHistoryPanelMarkup(history, index)}</div>`
+    : '';
+  return `<button type="button" class="purchase-history-toggle" data-index="${index}" ${loading ? 'disabled' : ''}>${buttonLabel}</button>${panel}`;
+}
+
+function purchaseHistoryPanelMarkup(history, index) {
+  if (history?.loading) return '<div class="purchase-history-empty">در حال دریافت سوابق…</div>';
+  if (history?.error) return `<div class="purchase-history-empty error">${esc(history.error)}</div>`;
+  const rows = history?.items || [];
+  if (!rows.length) return '<div class="purchase-history-empty">برای این کالا سابقهٔ خرید فعال ثبت نشده است.</div>';
+  const summary = history.summary || {};
+  return `<div class="purchase-history-summary"><span>کمینه <b>${money(summary.minUnitPrice)}</b></span><span>بیشینه <b>${money(summary.maxUnitPrice)}</b></span><span>میانگین خالص <b>${money(summary.averageEffectiveUnitPrice)}</b></span>${summary.selectedSupplierCount ? `<span class="selected-supplier-count">${summary.selectedSupplierCount} خرید از تأمین‌کنندهٔ انتخاب‌شده</span>` : ''}</div><div class="purchase-history-rows">${rows.map((row) => `<button type="button" class="purchase-history-row ${row.isSelectedSupplier ? 'selected-supplier' : ''}" data-index="${index}" data-price="${Number(row.effectiveUnitPrice || 0)}" title="انتخاب این قیمت"><span><strong>${esc(row.supplierName)}</strong><small>${isoToJalali(row.date)} · فاکتور ${esc(row.invoiceNumber)} · ${Number(row.quantity || 0)} عدد${Number(row.returnedQuantity || 0) ? ` · ${Number(row.returnedQuantity)} مرجوعی` : ''}</small></span><span><small>واحد ${money(row.unitPrice)}${Number(row.discount || 0) ? ` · تخفیف ${money(row.discount)}` : ''}</small><b>خالص ${money(row.effectiveUnitPrice)}</b></span></button>`).join('')}</div><small class="purchase-history-note">قیمت خالص، پس از تخفیف همان ردیف است و تخفیف یا مالیات کل فاکتور را شامل نمی‌شود.</small>`;
+}
+
+async function loadPurchasePricesForItem(item) {
+  const state = invoiceState.purchase;
+  if (!item?.productId) return;
+  const productId = item.productId;
+  item.purchasePriceOptions = [];
+  try {
+    const history = await window.api.purchases.priceHistory(productId, { limit: 20 });
+    const current = state.items.find((candidate) => candidate === item);
+    if (!current || current.productId !== productId) return;
+    current.purchasePriceOptions = history.items || [];
+    if (current.priceType === 'purchase' && current.purchasePriceOptions.length) {
+      current.unitPrice = Number(current.purchasePriceOptions[0].effectiveUnitPrice || 0);
+      current.priceType = 'custom';
+    }
+    const index = state.items.indexOf(current);
+    const input = $(`#purchaseInvoiceItems tr[data-index="${index}"] .purchase-price-input`);
+    if (input) input.value = formatPriceInput(current.unitPrice);
+    renderPurchasePriceSuggestions(current, index);
+  } catch (error) {
+    const current = state.items.find((candidate) => candidate === item);
+    if (!current || current.productId !== productId) return;
+    current.purchasePriceOptions = [];
+    renderPurchasePriceSuggestions(current, state.items.indexOf(current));
+  }
+}
+
+function refreshPurchasePrices() {
+  const entry = invoiceState.purchase.items[0];
+  if (entry?.productId) loadPurchasePricesForItem(entry);
+}
+
+function commitPurchaseEntry() {
+  const state = invoiceState.purchase;
+  const entry = state.items[0];
+  if (!entry?.productId) return showToast('ابتدا کالا را انتخاب کنید.', true);
+  if (Number(entry.unitPrice || 0) <= 0) return showToast('قیمت خرید را وارد یا انتخاب کنید.', true);
+  entry.purchasePriceOpen = false;
+  entry.purchasePriceActiveIndex = -1;
+  state.items.push({ ...entry, purchasePriceOpen: false, purchasePriceActiveIndex: -1 });
+  state.items[0] = newInvoiceItem('purchase');
+  renderKeyboardItems('purchase', { index: 0, className: 'invoice-product-input' });
+  renderKeyboardSummary('purchase');
+}
+
+function commitSaleEntry() {
+  const state = invoiceState.sale;
+  const entry = state.items[0];
+  if (!entry?.productId) return showToast('ابتدا کالا را انتخاب کنید.', true);
+  if (Number(entry.unitPrice || 0) <= 0) return showToast('قیمت فروش را وارد یا انتخاب کنید.', true);
+  state.items.push({ ...entry });
+  state.items[0] = newInvoiceItem('sale');
+  renderKeyboardItems('sale', { index: 0, className: 'invoice-product-input' });
+  renderKeyboardSummary('sale');
 }
 
 function keyboardInvoiceTotals(kind) {
   const state = invoiceState[kind];
-  const subtotal = state.items.reduce((sum, item) => sum + Math.max(0, item.quantity * item.unitPrice - item.discount), 0);
+  const invoiceItems = (kind === 'purchase' || (kind === 'sale' && !state.editingId)) ? state.items.slice(1) : state.items;
+  const subtotal = invoiceItems.reduce((sum, item) => sum + Math.max(0, item.quantity * item.unitPrice - item.discount), 0);
   const discount = parsePriceInput($(`#${kind}Discount`).value); const tax = parsePriceInput($(`#${kind}Tax`).value);
   return { subtotal, discount, tax, total: Math.max(0, subtotal - discount + tax) };
 }
@@ -1481,23 +1767,39 @@ function renderKeyboardSummary(kind) {
 function showKeyboardSuggestions(kind, index) {
   const row = $(`#${kind}InvoiceItems tr[data-index="${index}"]`); const input = row?.querySelector('.invoice-product-input'); const box = row?.querySelector('.invoice-suggestions'); if (!input || !box) return;
   const tokens = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean); const rows = invoiceState[kind].products.filter((p) => !tokens.length || tokens.every((token) => [p.name, p.code, p.barcode].some((v) => String(v || '').toLowerCase().includes(token)))).slice(0, 8);
-  box.innerHTML = rows.map((p) => `<button type="button" class="invoice-suggestion" data-kind="${kind}" data-index="${index}" data-id="${p.id}"><span>${esc(p.name)}<small>${esc(p.code)} · موجودی ${p.stock}</small></span><b>${money(kind === 'purchase' ? p.purchasePrice : p.salePrice)}</b></button>`).join('');
+  box.innerHTML = rows.map((p) => `<button type="button" class="invoice-suggestion" data-kind="${kind}" data-index="${index}" data-id="${p.id}"><span>${esc(p.name)}${kind === 'purchase' ? '' : `<small>${esc(p.code)} · موجودی ${p.stock}</small>`}</span><b>${money(kind === 'purchase' ? p.purchasePrice : p.salePrice)}</b></button>`).join('');
   box.classList.toggle('hidden', !rows.length);
 }
 
 function chooseKeyboardProduct(kind, index, product) {
-  if (!product) return; const item = invoiceState[kind].items[index];
-  Object.assign(item, { productId: product.id, name: product.name, code: product.code, query: product.name, stock: product.stock, retailPrice: product.salePrice, wholesalePrice: product.wholesalePrice, purchasePrice: product.purchasePrice, unitPrice: kind === 'purchase' ? product.purchasePrice : product.salePrice, priceType: kind === 'purchase' ? 'purchase' : 'retail' });
-  const duplicate = invoiceState[kind].items.findIndex((candidate, candidateIndex) => candidateIndex !== index && candidate.productId === item.productId && candidate.unitPrice === item.unitPrice);
+  if (!product) return; const state = invoiceState[kind]; const item = state.items[index];
+  const isEntryRow = index === 0 && (kind === 'purchase' || (kind === 'sale' && !state.editingId));
+  Object.assign(item, { productId: product.id, name: product.name, code: product.code, query: product.name, stock: product.stock, retailPrice: product.salePrice, wholesalePrice: product.wholesalePrice, purchasePrice: product.purchasePrice, unitPrice: kind === 'purchase' ? 0 : product.salePrice, priceType: kind === 'purchase' ? 'purchase' : 'retail' });
+  if (kind === 'purchase') Object.assign(item, { purchasePriceOptions: [] });
+  if (isEntryRow) {
+    renderKeyboardItems(kind, { index: 0, className: 'invoice-quantity' });
+    if (kind === 'purchase') loadPurchasePricesForItem(item);
+    return;
+  }
+  const duplicate = state.items.findIndex((candidate, candidateIndex) => candidateIndex !== index && candidate.productId === item.productId && candidate.unitPrice === item.unitPrice);
   if (duplicate >= 0) {
-    invoiceState[kind].items[duplicate].quantity += item.quantity || 1;
-    invoiceState[kind].items.splice(index, 1);
+    state.items[duplicate].quantity += item.quantity || 1;
+    if (isEntryRow) state.items[index] = newInvoiceItem(kind);
+    else state.items.splice(index, 1);
     renderKeyboardItems(kind, { index: duplicate, className: 'invoice-quantity' }); renderKeyboardSummary(kind); return;
   }
   renderKeyboardItems(kind, { index, className: 'invoice-quantity' }); renderKeyboardSummary(kind);
+  if (kind === 'purchase') loadPurchasePricesForItem(item);
 }
 
-function addKeyboardRow(kind) { invoiceState[kind].items.push(newInvoiceItem(kind)); renderKeyboardItems(kind, { index: invoiceState[kind].items.length - 1, className: 'invoice-product-input' }); }
+function addKeyboardRow(kind) {
+  if (kind === 'purchase' || (kind === 'sale' && !invoiceState.sale.editingId)) {
+    renderKeyboardItems(kind, { index: 0, className: 'invoice-product-input' });
+    return;
+  }
+  invoiceState[kind].items.push(newInvoiceItem(kind));
+  renderKeyboardItems(kind, { index: invoiceState[kind].items.length - 1, className: 'invoice-product-input' });
+}
 
 function addKeyboardPayment(kind) {
   const amount = parsePriceInput($(`#${kind}PaymentAmount`).value); const method = $(`#${kind}PaymentMethod`).value;
@@ -1531,7 +1833,7 @@ function clearKeyboardInvoice(kind) {
 async function saveKeyboardInvoice(kind, print = false) {
   const state = invoiceState[kind]; const error = $(`#${kind}InvoiceError`); error.classList.add('hidden');
   try {
-    const items = state.items.filter((item) => item.productId).map((item) => ({
+    const items = state.items.filter((item, index) => item.productId && (kind === 'purchase' || (kind === 'sale' && !state.editingId) ? index > 0 : true)).map((item) => ({
       productId: item.productId,
       quantity: item.quantity,
       // createPurchase receives persisted monetary values in cents, while
@@ -1570,11 +1872,35 @@ async function saveKeyboardInvoice(kind, print = false) {
 
 function bindKeyboardInvoices() {
   document.querySelectorAll('.invoice-editor').forEach((editor) => {
+    editor.addEventListener('focusin', (event) => {
+      const input = event.target.closest('.purchase-price-input');
+      if (input) openPurchasePriceSuggestions(Number(input.dataset.index));
+    });
     editor.addEventListener('input', (event) => {
       const t = event.target; const kind = t.dataset.kind; if (!kind) return; const item = invoiceState[kind].items[Number(t.dataset.index)];
-      if (t.classList.contains('invoice-product-input')) { item.query = t.value; showKeyboardSuggestions(kind, Number(t.dataset.index)); }
+      if (t.classList.contains('invoice-product-input')) {
+        item.query = t.value;
+        const requestId = Number(t.dataset.productSearchRequest || 0) + 1;
+        t.dataset.productSearchRequest = String(requestId);
+        showKeyboardSuggestions(kind, Number(t.dataset.index));
+        // Re-query the database while typing so products created in the
+        // products screen or through the invoice modal appear immediately.
+        window.api.products.search(t.value).then((products) => {
+          if (Number(t.dataset.productSearchRequest) !== requestId) return;
+          invoiceState[kind].products = products;
+          showKeyboardSuggestions(kind, Number(t.dataset.index));
+        }).catch(() => {});
+      }
       else if (t.classList.contains('invoice-quantity')) item.quantity = Math.max(1, Math.round(Number(t.value) || 1));
-      else if (t.classList.contains('invoice-price-custom')) item.unitPrice = parsePriceInput(t.value);
+      else if (t.classList.contains('invoice-price-custom')) {
+        item.unitPrice = parsePriceInput(t.value);
+        if (kind === 'purchase') {
+          item.priceType = 'custom';
+          item.purchasePriceActiveIndex = -1;
+          item.purchasePriceOpen = true;
+          renderPurchasePriceSuggestions(item, Number(t.dataset.index));
+        }
+      }
       else if (t.classList.contains('invoice-discount-line')) item.discount = parsePriceInput(t.value);
       renderKeyboardSummary(kind);
     });
@@ -1585,36 +1911,142 @@ function bindKeyboardInvoices() {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (suggestions.length) { active = event.key === 'ArrowDown' ? (active + 1) % suggestions.length : (active - 1 + suggestions.length) % suggestions.length; suggestions.forEach((n, i) => n.classList.toggle('active', i === active)); } }
         if (event.key === 'Enter') { event.preventDefault(); const button = suggestions[active >= 0 ? active : 0]; if (button) chooseKeyboardProduct(kind, index, invoiceState[kind].products.find((p) => p.id === Number(button.dataset.id))); }
         if (event.key === 'Escape') t.parentElement.querySelector('.invoice-suggestions')?.classList.add('hidden');
-      } else if (event.key === 'Enter' && t.classList.contains('invoice-quantity')) { event.preventDefault(); t.closest('tr').querySelector('.invoice-price')?.focus(); }
-      else if (event.key === 'Enter' && (t.classList.contains('invoice-price-custom') || t.classList.contains('invoice-price-combo') || t.classList.contains('invoice-discount-line') || t.classList.contains('line-total'))) { event.preventDefault(); addKeyboardRow(kind); }
-      if (event.ctrlKey && event.key === 'Delete') { event.preventDefault(); invoiceState[kind].items.splice(index, 1); if (!invoiceState[kind].items.length) invoiceState[kind].items.push(newInvoiceItem(kind)); renderKeyboardItems(kind); renderKeyboardSummary(kind); }
+      } else if (event.key === 'Enter' && t.classList.contains('invoice-quantity')) {
+        event.preventDefault();
+        t.closest('tr').querySelector(kind === 'purchase' ? '.purchase-price-input' : '.invoice-price-combo')?.focus();
+      } else if (event.key === 'ArrowDown' && t.classList.contains('purchase-price-input')) {
+        event.preventDefault();
+        const item = invoiceState.purchase.items[index];
+        const count = item?.purchasePriceOptions?.length || 0;
+        if (count) {
+          item.purchasePriceOpen = true;
+          item.purchasePriceActiveIndex = (Number(item.purchasePriceActiveIndex) + 1 + count) % count;
+          renderPurchasePriceSuggestions(item, index);
+        }
+      } else if (event.key === 'ArrowUp' && t.classList.contains('purchase-price-input')) {
+        event.preventDefault();
+        const item = invoiceState.purchase.items[index];
+        const count = item?.purchasePriceOptions?.length || 0;
+        if (count) {
+          item.purchasePriceOpen = true;
+          item.purchasePriceActiveIndex = Number(item.purchasePriceActiveIndex) < 0
+            ? count - 1
+            : (Number(item.purchasePriceActiveIndex) - 1 + count) % count;
+          renderPurchasePriceSuggestions(item, index);
+        }
+      } else if (event.key === 'Enter' && t.classList.contains('purchase-price-input')) {
+        const item = invoiceState.purchase.items[index];
+        if (item?.purchasePriceActiveIndex >= 0 && item.purchasePriceOptions?.[item.purchasePriceActiveIndex]) {
+          event.preventDefault();
+          const selected = item.purchasePriceOptions[item.purchasePriceActiveIndex];
+          item.unitPrice = Number(selected.effectiveUnitPrice || 0);
+          item.priceType = 'custom';
+          t.value = formatPriceInput(item.unitPrice);
+          commitPurchaseEntry();
+        } else {
+          event.preventDefault();
+          commitPurchaseEntry();
+        }
+      } else if (event.key === 'Escape' && t.classList.contains('purchase-price-input')) {
+        const item = invoiceState.purchase.items[index];
+        if (item) {
+          item.purchasePriceOpen = false;
+          item.purchasePriceActiveIndex = -1;
+          renderPurchasePriceSuggestions(item, index);
+        }
+      } else if (event.key === 'Enter' && kind === 'sale' && !invoiceState.sale.editingId
+        && (t.classList.contains('invoice-price-combo') || t.classList.contains('invoice-price-custom'))) {
+        event.preventDefault();
+        commitSaleEntry();
+      } else if (kind === 'sale' && t.classList.contains('invoice-price-custom')
+        && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        const combo = t.closest('td')?.querySelector('.invoice-price-combo');
+        if (combo) {
+          event.preventDefault();
+          const options = [...combo.options].filter((option) => !option.disabled);
+          const current = Math.max(0, options.findIndex((option) => option.value === invoiceState.sale.items[index]?.priceType));
+          const next = event.key === 'ArrowDown'
+            ? (current + 1) % options.length
+            : (current - 1 + options.length) % options.length;
+          setInvoicePriceSelection('sale', index, options[next].value, { focus: true });
+        }
+      } else if (kind === 'sale' && t.classList.contains('invoice-price-custom') && event.key === 'Escape') {
+        event.preventDefault();
+        t.closest('td')?.querySelector('.invoice-price-combo')?.focus();
+      } else if (event.key === 'Enter' && (t.classList.contains('invoice-price-custom') || t.classList.contains('invoice-price-combo') || t.classList.contains('invoice-discount-line') || t.classList.contains('line-total'))) { event.preventDefault(); addKeyboardRow(kind); }
+      if (event.ctrlKey && event.key === 'Delete') {
+        event.preventDefault();
+        const state = invoiceState[kind];
+        if ((kind === 'purchase' || (kind === 'sale' && !state.editingId)) && index === 0) {
+          state.items[0] = newInvoiceItem(kind);
+          renderKeyboardItems(kind, { index: 0, className: 'invoice-product-input' });
+        } else {
+          state.items.splice(index, 1);
+          if (!state.items.length) state.items.push(newInvoiceItem(kind));
+          if (kind === 'purchase' && state.items[0]?.productId) state.items.unshift(newInvoiceItem('purchase'));
+          renderKeyboardItems(kind);
+        }
+        renderKeyboardSummary(kind);
+      }
     });
     editor.addEventListener('change', (event) => {
       const combo = event.target.closest('.invoice-price-combo');
       if (!combo) return;
       const kind = combo.dataset.kind;
       const index = Number(combo.dataset.index);
-      const item = invoiceState[kind]?.items[index];
-      const custom = combo.closest('td')?.querySelector('.invoice-price-custom');
-      if (!item || !custom) return;
-      item.priceType = combo.value;
-      if (combo.value === 'custom') {
-        item.unitPrice = 0;
-        custom.value = '';
-        custom.classList.remove('hidden');
-        requestAnimationFrame(() => { custom.focus(); });
-      } else {
-        item.unitPrice = combo.value === 'wholesale' ? item.wholesalePrice
-          : combo.value === 'purchase' ? item.purchasePrice : item.retailPrice;
-        custom.value = '';
-        custom.classList.add('hidden');
-      }
-      renderKeyboardSummary(kind);
+      setInvoicePriceSelection(kind, index, combo.value);
     });
     editor.addEventListener('click', (event) => {
       const s = event.target.closest('.invoice-suggestion'); if (s) { chooseKeyboardProduct(s.dataset.kind, Number(s.dataset.index), invoiceState[s.dataset.kind].products.find((p) => p.id === Number(s.dataset.id))); return; }
+      const priceOption = event.target.closest('.purchase-price-option');
+      if (priceOption) {
+        const index = Number(priceOption.dataset.index);
+        const optionIndex = Number(priceOption.dataset.optionIndex);
+        const item = invoiceState.purchase.items[index];
+        const selected = item?.purchasePriceOptions?.[optionIndex];
+        if (item && selected) {
+          item.unitPrice = Number(selected.effectiveUnitPrice || 0);
+          item.priceType = 'custom';
+          item.purchasePriceActiveIndex = optionIndex;
+          item.purchasePriceOpen = true;
+          renderKeyboardItems('purchase', { index, className: 'purchase-price-input' });
+          renderKeyboardSummary('purchase');
+        }
+        return;
+      }
+      const historyToggle = event.target.closest('.purchase-history-toggle');
+      if (historyToggle) {
+        const item = invoiceState.purchase.items[Number(historyToggle.dataset.index)];
+        if (item?.purchaseHistory && !item.purchaseHistory.loading) {
+          item.purchaseHistoryOpen = !item.purchaseHistoryOpen;
+          renderKeyboardItems('purchase');
+        }
+        return;
+      }
+      const historyRow = event.target.closest('.purchase-history-row');
+      if (historyRow) {
+        const index = Number(historyRow.dataset.index);
+        const item = invoiceState.purchase.items[index];
+        if (!item) return;
+        item.unitPrice = Number(historyRow.dataset.price || 0);
+        item.priceType = 'custom';
+        item.purchaseHistoryOpen = false;
+        renderKeyboardItems('purchase', { index, className: 'invoice-price-custom' });
+        renderKeyboardSummary('purchase');
+        return;
+      }
       const combo = event.target.closest('.invoice-price-combo'); if (combo) { const item = invoiceState[combo.dataset.kind].items[Number(combo.dataset.index)]; if (combo.value === 'custom') { item.priceType = 'custom'; item.unitPrice = 0; const custom = combo.closest('td').querySelector('.invoice-price-custom'); custom.value = ''; custom.classList.remove('hidden'); requestAnimationFrame(() => custom.focus()); } }
-      const remove = event.target.closest('.delete-line'); if (remove) { const state = invoiceState[remove.dataset.kind]; state.items.splice(Number(remove.dataset.index), 1); if (!state.items.length) state.items.push(newInvoiceItem(remove.dataset.kind)); renderKeyboardItems(remove.dataset.kind); renderKeyboardSummary(remove.dataset.kind); }
+      const remove = event.target.closest('.delete-line');
+      if (remove) {
+        const kind = remove.dataset.kind;
+        const state = invoiceState[kind];
+        if ((kind === 'purchase' || (kind === 'sale' && !state.editingId)) && Number(remove.dataset.index) === 0) return;
+        state.items.splice(Number(remove.dataset.index), 1);
+        if (!state.items.length) state.items.push(newInvoiceItem(kind));
+        if (kind === 'purchase' && state.items[0]?.productId) state.items.unshift(newInvoiceItem('purchase'));
+        renderKeyboardItems(kind);
+        renderKeyboardSummary(kind);
+      }
     });
   });
   document.querySelectorAll('.invoice-new-row').forEach((b) => b.addEventListener('click', () => addKeyboardRow(b.dataset.kind)));
@@ -1685,7 +2117,7 @@ function bindKeyboardInvoices() {
 function restoreDailySalesMarkup() {
   const page = $('#salesPage');
   if (!page || page.dataset.dailyRestored) return;
-  page.innerHTML = `<div class="page-heading"><div><span class="eyebrow">عملیات فروش</span></div><label class="sale-date-field">تاریخ فروش<input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>لیست محصولات</h3><small id="dailySalePriceHint">قیمت‌ها به ${currencyLabel()} نمایش داده می‌شوند.</small></div><div class="toolbar-search"><span>⌕</span><input id="saleProductFilter" placeholder="کلیدواژه: نام، کد یا بارکد"></div></div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th id="dailySalePriceHeader">قیمت (${currencyLabel()})</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-total"><span id="dailySaleTotalLabel">مبلغ کل (${currencyLabel()})</span><strong id="modernSaleTotal">${money(0)}</strong></div><div id="modernSaleError" class="form-error hidden"></div><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش</button><button id="modernSaveSalePrint" class="secondary wide" type="button">ثبت و چاپ فاکتور رسمی</button></aside></div>`;
+  page.innerHTML = `<div class="page-heading"><div><span class="eyebrow">عملیات فروش</span></div><label class="sale-date-field daily-sale-date-field"><span class="sale-date-caption"><i aria-hidden="true">◷</i>تاریخ فروش</span><input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>لیست محصولات</h3><small id="dailySalePriceHint">قیمت‌ها به ${currencyLabel()} نمایش داده می‌شوند.</small></div><div class="toolbar-search"><span>⌕</span><input id="saleProductFilter" placeholder="کلیدواژه: نام، کد یا بارکد"></div></div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th id="dailySalePriceHeader">قیمت (${currencyLabel()})</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-total"><span id="dailySaleTotalLabel">مبلغ کل (${currencyLabel()})</span><strong id="modernSaleTotal">${money(0)}</strong></div><div id="modernSaleError" class="form-error hidden"></div><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش</button><button id="modernSaveSalePrint" class="secondary wide" type="button">ثبت و چاپ فاکتور رسمی</button></aside></div>`;
   $('#saleDate').type = 'text';
   $('#saleDate').inputMode = 'numeric';
   $('#saleDate').autocomplete = 'off';
@@ -1720,6 +2152,8 @@ function setManagedPage(page) {
   productMenu?.querySelector('.product-menu-toggle')?.setAttribute('aria-expanded', String(productPage || productMenu?.classList.contains('open')));
   $('#pageTitle').textContent = titles[page] || page; $('#windowContext').textContent = titles[page] || page;
   if (page === 'products') loadManagedProducts(); if (page === 'categories') loadManagedCategories(); if (page === 'customers') loadManagedParties();
+  if (page === 'sales-invoice') loadKeyboardInvoice('sale').catch(() => {});
+  if (page === 'purchases') loadKeyboardInvoice('purchase').catch(() => {});
   if (page === 'sales-invoices') loadInvoiceList('sales'); if (page === 'purchase-invoices') loadInvoiceList('purchases');
   if (page === 'reports') loadSalesReport();
 }
@@ -2317,6 +2751,47 @@ async function loadChecksPage() {
   };
 }
 
+function ensureInstallmentPaymentDialog() {
+  let backdrop = $('#installmentPaymentBackdrop');
+  if (backdrop) return backdrop;
+  document.body.insertAdjacentHTML('beforeend', `<div id="installmentPaymentBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:420px"><div class="modal-header"><div><span class="eyebrow">دریافت قسط</span><h3>ثبت پرداخت قسط</h3></div><button type="button" class="modal-close installment-payment-close">×</button></div><form id="installmentPaymentForm"><label>مبلغ پرداختی<input id="installmentPaymentAmount" class="money-input" inputmode="decimal" required></label><div id="installmentPaymentError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary installment-payment-close">انصراف</button><button type="submit" class="primary">ثبت پرداخت</button></div></form></div></div>`);
+  backdrop = $('#installmentPaymentBackdrop');
+  backdrop.addEventListener('click', (event) => {
+    if (event.target === backdrop || event.target.closest('.installment-payment-close')) backdrop.classList.add('hidden');
+  });
+  $('#installmentPaymentForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const error = $('#installmentPaymentError');
+    error.classList.add('hidden');
+    const installmentId = Number(backdrop.dataset.installmentId);
+    try {
+      const amount = parsePriceInput($('#installmentPaymentAmount').value);
+      const remaining = Number(backdrop.dataset.remaining || 0);
+      if (!installmentId || !amount) throw new Error('مبلغ پرداختی را وارد کنید.');
+      if (amount > remaining) throw new Error(`مبلغ پرداختی نمی‌تواند بیشتر از ${money(remaining)} باشد.`);
+      await window.api.installments.recordPayment(installmentId, { amount, method: 'cash', paidAt: new Date().toISOString() });
+      backdrop.classList.add('hidden');
+      showToast('پرداخت قسط ثبت شد.');
+      await loadInstallmentsPage();
+    } catch (e) {
+      error.textContent = readableError(e, 'ثبت پرداخت قسط ناموفق بود.');
+      error.classList.remove('hidden');
+    }
+  });
+  return backdrop;
+}
+
+function openInstallmentPaymentDialog(button) {
+  const backdrop = ensureInstallmentPaymentDialog();
+  const remaining = Number(button.dataset.remaining || 0);
+  backdrop.dataset.installmentId = String(button.dataset.id || '');
+  backdrop.dataset.remaining = String(remaining);
+  $('#installmentPaymentAmount').value = formatPriceInput(remaining);
+  $('#installmentPaymentError').classList.add('hidden');
+  backdrop.classList.remove('hidden');
+  requestAnimationFrame(() => { $('#installmentPaymentAmount').focus(); $('#installmentPaymentAmount').select(); });
+}
+
 async function loadInstallmentsPage() {
   initializeOperationsPages();
   const error = $('#installmentsError'); error.classList.add('hidden');
@@ -2333,15 +2808,15 @@ async function loadInstallmentsPage() {
     select.innerHTML = '<option value="">انتخاب فاکتور دارای مانده</option>' + invoices.map((i) => `<option value="${i.invoiceKind}:${i.id}">${esc(i.label)} · ${esc(i.partyName || 'بدون طرف‌حساب')} · ${money(i.remainingAmount)}</option>`).join('');
     if (previous) select.value = previous;
     const labels = { active: 'فعال', completed: 'تسویه‌شده', cancelled: 'لغوشده', pending: 'در انتظار', partial: 'پرداخت ناقص', paid: 'پرداخت‌شده', overdue: 'معوق' };
-    $('#installmentPlansTable').innerHTML = plans.length ? plans.map((plan) => `<tr><td><strong>${esc(plan.invoiceNumber || '—')}</strong><small>${plan.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${esc(plan.partyName || 'بدون طرف‌حساب')}</td><td>${money(plan.totalAmount)}</td><td><span class="status-badge ${plan.status === 'completed' ? 'active' : 'warning'}">${labels[plan.status] || plan.status}</span></td><td><div class="installment-rows">${plan.installments.map((item) => `<div class="installment-row"><span>${item.installmentNumber}. ${isoToJalali(item.dueDate)}</span><b>${money(item.amount)}</b><small>${money(item.paidAmount)} · ${labels[item.status] || item.status}</small>${item.status !== 'paid' && item.status !== 'cancelled' ? `<button class="table-action installment-pay" data-id="${item.id}" data-remaining="${Number(item.amount) - Number(item.paidAmount || 0)}">ثبت پرداخت</button>` : ''}</div>`).join('')}</div></td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">برنامه اقساطی ثبت نشده است.</td></tr>';
+    $('#installmentPlansTable').innerHTML = plans.length ? plans.map((plan) => `<tr><td><strong>${esc(plan.invoiceNumber || '—')}</strong><small>${plan.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${esc(plan.partyName || 'بدون طرف‌حساب')}</td><td>${money(plan.totalAmount)}</td><td><span class="status-badge ${plan.status === 'completed' ? 'active' : 'warning'}">${labels[plan.status] || plan.status}</span></td><td><div class="installment-rows">${plan.installments.map((item) => `<div class="installment-row"><span>${item.installmentNumber}. ${isoToJalali(item.dueDate)}</span><b>${money(item.amount)}</b><small>${money(item.paidAmount)} · ${labels[item.status] || item.status}</small>${item.status !== 'paid' && item.status !== 'cancelled' ? `<button type="button" class="table-action installment-pay" data-id="${item.id}" data-remaining="${Number(item.amount) - Number(item.paidAmount || 0)}">ثبت پرداخت</button>` : ''}</div>`).join('')}</div></td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">برنامه اقساطی ثبت نشده است.</td></tr>';
     $('#installmentPlanForm').onsubmit = async (event) => {
       event.preventDefault(); error.classList.add('hidden');
       try {
         const [kind, idText] = String(select.value).split(':');
         const invoice = invoices.find((item) => item.invoiceKind === kind && item.id === Number(idText));
         const count = Math.max(1, Math.min(120, Number($('#installmentCount').value || 1)));
-        const firstDue = $('#installmentFirstDue').value;
-        if (!invoice || !firstDue) throw new Error('فاکتور و تاریخ اولین سررسید را انتخاب کنید.');
+        const firstDue = jalaliInputToIso($('#installmentFirstDue').value);
+        if (!invoice || !firstDue) throw new Error('فاکتور و تاریخ اولین سررسید را به صورت معتبر وارد کنید.');
         const total = Number(invoice.remainingAmount);
         const base = Math.floor(total / count);
         const installments = Array.from({ length: count }, (_, index) => {
@@ -2355,13 +2830,11 @@ async function loadInstallmentsPage() {
     $('#refreshInstallments').onclick = () => loadInstallmentsPage().catch((e) => showToast(e.message, true));
     $('#installmentPlansTable').onclick = async (event) => {
       const button = event.target.closest('.installment-pay'); if (!button) return;
-      const amountText = prompt(`مبلغ پرداختی (حداکثر ${money(Number(button.dataset.remaining))})`, formatPriceInput(Number(button.dataset.remaining)));
-      if (amountText == null) return;
-      try {
-        const amount = parsePriceInput(amountText);
-        await window.api.installments.recordPayment(Number(button.dataset.id), { amount, method: 'cash', paidAt: new Date().toISOString() });
-        showToast('پرداخت قسط ثبت شد.'); await loadInstallmentsPage();
-      } catch (e) { showToast(readableError(e, 'ثبت پرداخت قسط ناموفق بود.'), true); }
+      event.preventDefault();
+      event.stopPropagation();
+      const remaining = Number(button.dataset.remaining || 0);
+      if (!remaining) return;
+      openInstallmentPaymentDialog(button);
     };
   } catch (e) { error.textContent = readableError(e, 'دریافت اطلاعات اقساط ناموفق بود.'); error.classList.remove('hidden'); }
 }

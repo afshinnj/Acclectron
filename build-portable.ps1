@@ -37,7 +37,11 @@ $appFiles = @(
 foreach ($file in $appFiles) {
   Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $appDir -Recurse -Force
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'RELEASE_NOTES_1.0.0.md') -Destination $outputRoot -Force
+$releaseNotes = Join-Path $projectRoot "RELEASE_NOTES_$version.md"
+if (-not (Test-Path -LiteralPath $releaseNotes)) {
+  throw "Release notes file was not found: $releaseNotes"
+}
+Copy-Item -LiteralPath $releaseNotes -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\Acclectron-User-Manual-fa.pdf') -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\Acclectron-Manual.html') -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $electronDir 'electron.exe') -Destination $exePath -Force

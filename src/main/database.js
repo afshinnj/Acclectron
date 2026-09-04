@@ -15,6 +15,26 @@ const ROLE_PERMISSIONS = {
   viewer: ['reports']
 };
 
+function toPlainRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  return Object.fromEntries(Object.entries(row));
+}
+
+function normalizeDatabaseRows(db) {
+  // node:sqlite returns rows with a null prototype. Expose regular objects
+  // consistently to callers (and to consumers using strict deep equality).
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = (...args) => {
+    const statement = originalPrepare(...args);
+    const originalGet = statement.get.bind(statement);
+    const originalAll = statement.all.bind(statement);
+    statement.get = (...params) => toPlainRow(originalGet(...params));
+    statement.all = (...params) => originalAll(...params).map(toPlainRow);
+    return statement;
+  };
+  return db;
+}
+
 function tableColumns(db, tableName) {
   return new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((column) => column.name));
 }
@@ -29,7 +49,7 @@ function getDatabase(userDataPath) {
   if (database) return database;
   const dataDirectory = userDataPath || path.join(process.cwd(), 'data');
   fs.mkdirSync(dataDirectory, { recursive: true });
-  database = new DatabaseSync(path.join(dataDirectory, 'accletron.db'));
+  database = normalizeDatabaseRows(new DatabaseSync(path.join(dataDirectory, 'accletron.db')));
   database.exec(`
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS products (
@@ -334,8 +354,12 @@ function getDatabase(userDataPath) {
     BEGIN
       SELECT RAISE(ABORT, 'completed purchases cannot be deleted');
     END;
-    CREATE TRIGGER IF NOT EXISTS prevent_completed_purchase_update
-    BEFORE UPDATE OF invoice_number, supplier_id, date, subtotal, discount, tax, total, paid_amount, remaining_amount
+    -- Completed purchases keep their commercial details immutable. Payment
+    -- summaries are deliberately excluded because each settlement is recorded
+    -- separately in invoice_payments and must update the running balance.
+    DROP TRIGGER IF EXISTS prevent_completed_purchase_update;
+    CREATE TRIGGER prevent_completed_purchase_update
+    BEFORE UPDATE OF invoice_number, supplier_id, date, subtotal, discount, tax, total
     ON purchases
     WHEN OLD.status = 'completed'
     BEGIN
@@ -383,6 +407,8 @@ function getDatabase(userDataPath) {
   addColumnIfMissing(database, 'sale_items', 'profit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'sale_items', 'price_type', "TEXT NOT NULL DEFAULT 'retail'");
   addColumnIfMissing(database, 'stock_movements', 'description', 'TEXT');
+  addColumnIfMissing(database, 'sales_returns', 'balance_adjustment', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(database, 'purchase_returns', 'balance_adjustment', 'INTEGER NOT NULL DEFAULT 0');
 
   database.exec(`
     UPDATE categories SET code = CAST(id AS TEXT) WHERE code IS NULL OR trim(code) = '';
@@ -752,9 +778,22 @@ function listInstallmentPlans(payload = {}) {
     FROM installments i ORDER BY i.due_date, i.installment_number
   `).all();
   const updatePlan = db.prepare("UPDATE installment_plans SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'");
+  const cancelOpenInstallments = db.prepare("UPDATE installments SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE plan_id = ? AND status IN ('pending', 'partial')");
   return plans.map((plan) => {
     const rows = installments.filter((item) => item.planId === plan.id);
-    if (rows.length && rows.every((item) => item.status === 'paid')) { updatePlan.run(plan.id); plan.status = 'completed'; }
+    // An invoice may have been settled outside the installment screen
+    // (for example from invoice details). Do not leave stale "pay" buttons
+    // visible for a plan whose invoice has no remaining balance.
+    if (plan.status === 'active' && Number(plan.invoiceRemaining || 0) <= 0) {
+      cancelOpenInstallments.run(plan.id);
+      updatePlan.run(plan.id);
+      rows.forEach((item) => {
+        if (['pending', 'partial'].includes(item.status)) item.status = 'cancelled';
+      });
+      plan.status = 'completed';
+    } else if (rows.length && rows.every((item) => item.status === 'paid')) {
+      updatePlan.run(plan.id); plan.status = 'completed';
+    }
     return { ...plan, installments: rows };
   });
 }
@@ -773,7 +812,16 @@ function recordInstallmentPayment(id, payload = {}) {
   const method = ['cash', 'card', 'check'].includes(String(payload.method)) ? String(payload.method) : 'cash';
   const invoiceTable = installment.invoiceKind === 'sale' ? 'sales' : 'purchases';
   const invoice = db.prepare(`SELECT * FROM ${invoiceTable} WHERE id = ?`).get(installment.invoiceId);
-  if (!invoice || Number(invoice.remaining_amount) < amount) throw new Error('مبلغ از مانده فاکتور بیشتر است.');
+  const invoiceRemaining = Number(invoice?.remaining_amount || 0);
+  if (!invoice) throw new Error('فاکتور مرتبط با قسط پیدا نشد.');
+  if (invoiceRemaining <= 0) {
+    db.prepare("UPDATE installments SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending', 'partial')")
+      .run(installment.id);
+    db.prepare("UPDATE installment_plans SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'")
+      .run(installment.plan_id);
+    throw new Error('فاکتور مرتبط قبلاً تسویه شده است و این قسط قابل پرداخت نیست.');
+  }
+  if (invoiceRemaining < amount) throw new Error(`مبلغ پرداختی از مانده فاکتور (${invoiceRemaining}) بیشتر است.`);
   const payment = normalizeInvoicePayments([{ ...payload, method, amount: amount / 100 }], Number(invoice.remaining_amount), 0).payments[0];
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -900,6 +948,14 @@ function getAppSettings() {
       passwordlessLogin: settings.passwordlessLogin === true
     }
   };
+}
+
+// Monetary values are persisted as hundredths of a toman. Product imports
+// arrive in the unit selected by the user, so convert them back to the
+// canonical storage unit before writing.
+function getCurrencyInputFactor() {
+  const inputUnit = String(getAppSettings().currency?.inputUnit || 'rial').toLowerCase();
+  return inputUnit === 'rial' ? 10 : 1;
 }
 
 function saveAppSettings(payload = {}) {
@@ -1143,7 +1199,14 @@ function normalizeProductPayload(payload = {}) {
   if (!Number.isInteger(categoryId) || categoryId <= 0) throw new Error('دسته‌بندی انتخاب‌شده معتبر نیست.');
   const stock = Number(payload.stock ?? 0);
   const minimumStock = Number(payload.minimumStock ?? 0);
-  const prices = ['purchasePrice', 'wholesalePrice', 'retailPrice'].map((key) => Math.round(Number(payload[key]) || 0));
+  const purchasePrice = Math.max(0, Math.round(Number(payload.purchasePrice) || 0));
+  const wholesaleInput = Math.max(0, Math.round(Number(payload.wholesalePrice) || 0));
+  const retailInput = Math.max(0, Math.round(Number(payload.retailPrice) || 0));
+  // If selling prices are omitted, derive them from purchase price using the
+  // standard margins and round upward to a whole stored currency unit.
+  const wholesalePrice = wholesaleInput || (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.2) : 0);
+  const retailPrice = retailInput || (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.3) : 0);
+  const prices = [purchasePrice, wholesalePrice, retailPrice];
   if (![stock, minimumStock].every((value) => Number.isFinite(value) && value >= 0)) {
     throw new Error('موجودی و حداقل موجودی باید عدد معتبر باشند.');
   }
@@ -1231,9 +1294,12 @@ function importProducts(rows = [], duplicateMode = 'skip') {
   try {
     const categoryRows = db.prepare('SELECT id, name, code FROM categories WHERE is_active = 1').all();
     const categoryByName = new Map(categoryRows.map((category) => [normalizePersianText(category.name), category]));
-    const existingNames = new Set(
-      db.prepare('SELECT name, category_id AS categoryId FROM products').all()
-        .map((product) => `${normalizePersianText(product.name)}|${product.categoryId || ''}`)
+    const existingProducts = new Map(
+      db.prepare('SELECT id, name, category_id AS categoryId FROM products').all()
+        .map((product) => [
+          `${normalizePersianText(product.name)}|${product.categoryId || ''}`,
+          Number(product.id)
+        ])
     );
     const insertCategory = db.prepare(
       'INSERT INTO categories (code, name, description, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)'
@@ -1259,18 +1325,18 @@ function importProducts(rows = [], duplicateMode = 'skip') {
         }
         const duplicateKey = `${name}|${category.id}`;
         const stock = Number(row.stock);
-        const purchasePrice = Math.round(Number(row.purchasePrice) * 100);
-        const wholesalePrice = Math.round(Number(row.wholesalePrice) * 100);
-        const retailPrice = Math.round(Number(row.retailPrice) * 100);
-        if (existingNames.has(duplicateKey)) {
-          const existing = db.prepare('SELECT id FROM products WHERE name = ? AND category_id = ? LIMIT 1')
-            .get(name, category.id);
-          if (duplicateMode === 'update' && existing) {
+        const currencyFactor = getCurrencyInputFactor();
+        const purchasePrice = Math.round(Number(row.purchasePrice) * 100 / currencyFactor);
+        const wholesalePrice = Math.round(Number(row.wholesalePrice) * 100 / currencyFactor);
+        const retailPrice = Math.round(Number(row.retailPrice) * 100 / currencyFactor);
+        if (existingProducts.has(duplicateKey)) {
+          const existingId = existingProducts.get(duplicateKey);
+          if (duplicateMode === 'update' && existingId) {
             db.prepare(`
               UPDATE products SET sale_price = ?, purchase_price = ?, wholesale_price = ?,
                 retail_price = ?, stock = ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
-            `).run(retailPrice, purchasePrice, wholesalePrice, retailPrice, stock, existing.id);
+            `).run(retailPrice, purchasePrice, wholesalePrice, retailPrice, stock, existingId);
             result.updated = (result.updated || 0) + 1;
           } else {
             result.skipped += 1;
@@ -1278,11 +1344,11 @@ function importProducts(rows = [], duplicateMode = 'skip') {
           }
           continue;
         }
-        insertProduct.run(
+        const inserted = insertProduct.run(
           generateProductCode(category.id), name, retailPrice, purchasePrice,
           wholesalePrice, retailPrice, stock, category.id
         );
-        existingNames.add(duplicateKey);
+        existingProducts.set(duplicateKey, Number(inserted.lastInsertRowid));
         result.imported += 1;
       } catch (error) {
         result.errors.push({ row: row.sourceRow, message: error.message });
@@ -1556,14 +1622,14 @@ function getDashboardSummary() {
     FROM sale_items si JOIN sales s ON s.id = si.sale_id
     JOIN products p ON p.id = si.product_id
     WHERE s.status = 'active' AND substr(s.date, 1, 7) = ?
-    GROUP BY p.id, p.name ORDER BY netSales DESC LIMIT 6
+    GROUP BY p.id, p.name ORDER BY netSales DESC LIMIT 50
   `).all(month);
   const recentSales = db.prepare(`
-    SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.total,
+    SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.source, s.total,
       s.paid_amount AS paidAmount, s.remaining_amount AS remainingAmount,
       COALESCE(s.party_name, '') AS partyName
     FROM sales s WHERE s.status = 'active'
-    ORDER BY s.date DESC, s.id DESC LIMIT 8
+    ORDER BY s.date DESC, s.id DESC LIMIT 50
   `).all();
   const topDebtors = db.prepare(`
     SELECT partyName, SUM(balance) AS balance FROM (
@@ -1573,7 +1639,7 @@ function getDashboardSummary() {
       SELECT name AS partyName, balance FROM customers WHERE is_active = 1 AND balance > 0
       UNION ALL
       SELECT name AS partyName, balance FROM suppliers WHERE is_active = 1 AND balance > 0
-    ) GROUP BY partyName ORDER BY balance DESC LIMIT 6
+    ) GROUP BY partyName ORDER BY balance DESC LIMIT 50
   `).all();
   const cashMonth = db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
@@ -2155,6 +2221,73 @@ function invoiceListQuery(kind, payload = {}) {
 function listSales(payload = {}) { return invoiceListQuery('sale', payload); }
 function listPurchases(payload = {}) { return invoiceListQuery('purchase', payload); }
 
+function getPurchasePriceHistory(productId, payload = {}) {
+  const db = requireDatabase();
+  const id = Number(productId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('کالای موردنظر معتبر نیست.');
+
+  const limit = Math.min(50, Math.max(1, Math.floor(Number(payload.limit) || 15)));
+  const partyId = Number(payload.partyId || 0);
+  const baseQuery = `
+    WITH returned_items AS (
+      SELECT pri.purchase_item_id AS purchase_item_id, SUM(pri.quantity) AS returned_quantity
+      FROM purchase_return_items pri
+      JOIN purchase_returns pr ON pr.id = pri.return_id
+      WHERE pr.status = 'completed'
+      GROUP BY pri.purchase_item_id
+    )
+    SELECT
+      pi.id AS purchaseItemId,
+      pu.id AS purchaseId,
+      pu.invoice_number AS invoiceNumber,
+      pu.date,
+      pu.party_id AS partyId,
+      COALESCE(
+        NULLIF(trim(pu.party_name), ''),
+        NULLIF(trim(COALESCE(pt.first_name, '') || ' ' || COALESCE(pt.last_name, '')), ''),
+        NULLIF(trim(s.name), ''),
+        'بدون تأمین‌کننده'
+      ) AS supplierName,
+      pi.quantity,
+      pi.unit_price AS unitPrice,
+      pi.discount AS discount,
+      pi.total AS lineTotal,
+      CAST(ROUND(CAST(pi.total AS REAL) / pi.quantity) AS INTEGER) AS effectiveUnitPrice,
+      COALESCE(ri.returned_quantity, 0) AS returnedQuantity,
+      CASE WHEN ? > 0 AND pu.party_id = ? THEN 1 ELSE 0 END AS isSelectedSupplier
+    FROM purchase_items pi
+    JOIN purchases pu ON pu.id = pi.purchase_id
+    LEFT JOIN parties pt ON pt.id = pu.party_id
+    LEFT JOIN suppliers s ON s.id = pu.supplier_id
+    LEFT JOIN returned_items ri ON ri.purchase_item_id = pi.id
+    WHERE pi.product_id = ? AND pu.status = 'completed'
+  `;
+  const items = db.prepare(`${baseQuery} ORDER BY pu.date DESC, pi.id DESC LIMIT ?`)
+    .all(partyId, partyId, id, limit);
+  const summary = db.prepare(`
+    SELECT
+      COUNT(*) AS count,
+      MIN(pi.unit_price) AS minUnitPrice,
+      MAX(pi.unit_price) AS maxUnitPrice,
+      CAST(ROUND(SUM(pi.total) * 1.0 / NULLIF(SUM(pi.quantity), 0)) AS INTEGER) AS averageEffectiveUnitPrice,
+      SUM(CASE WHEN ? > 0 AND pu.party_id = ? THEN 1 ELSE 0 END) AS selectedSupplierCount
+    FROM purchase_items pi
+    JOIN purchases pu ON pu.id = pi.purchase_id
+    WHERE pi.product_id = ? AND pu.status = 'completed'
+  `).get(partyId, partyId, id);
+
+  return {
+    items,
+    summary: {
+      count: Number(summary.count || 0),
+      minUnitPrice: Number(summary.minUnitPrice || 0),
+      maxUnitPrice: Number(summary.maxUnitPrice || 0),
+      averageEffectiveUnitPrice: Number(summary.averageEffectiveUnitPrice || 0),
+      selectedSupplierCount: Number(summary.selectedSupplierCount || 0)
+    }
+  };
+}
+
 function updateSale(id, payload = {}) {
   const db = requireDatabase();
   requirePermission('sales');
@@ -2243,7 +2376,7 @@ function getInvoiceDetails(kind, id) {
 
 function settleInvoice(kind, id, payload = {}) {
   const db = requireDatabase();
-  requirePermission('sales');
+  requirePermission(kind === 'sale' ? 'sales' : 'purchases');
   const invoiceId = Number(id);
   const table = kind === 'sale' ? 'sales' : 'purchases';
   const invoice = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(invoiceId);
@@ -2374,10 +2507,11 @@ function createSaleReturn(payload = {}) {
   const returnNumber = String(payload.returnNumber || '').trim() || nextReturnNumber(db, date);
   db.exec('BEGIN IMMEDIATE');
   try {
+    const balanceReduction = Math.min(total, Number(sale.remaining_amount || 0));
     const result = db.prepare(`
-      INSERT INTO sales_returns (return_number, sale_id, date, total, refund_amount, reason, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'completed')
-    `).run(returnNumber, saleId, date, total, refundAmount, String(payload.reason || '').trim());
+      INSERT INTO sales_returns (return_number, sale_id, date, total, refund_amount, reason, status, balance_adjustment)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
+    `).run(returnNumber, saleId, date, total, refundAmount, String(payload.reason || '').trim(), balanceReduction);
     const returnId = Number(result.lastInsertRowid);
     const insertItem = db.prepare(`
       INSERT INTO sales_return_items (return_id, sale_item_id, product_id, quantity, unit_price, discount, total)
@@ -2392,6 +2526,18 @@ function createSaleReturn(payload = {}) {
       insertItem.run(returnId, item.saleItemId, item.productId, item.quantity, item.unitPrice, item.discount, item.total);
       updateStock.run(item.quantity, item.productId);
       movement.run(item.productId, item.quantity, returnId, `مرجوعی ${returnNumber}`);
+    }
+    // A return reduces the outstanding receivable associated with the sale.
+    // Keep legacy customer records and the newer party ledger in sync.
+    if (balanceReduction > 0) {
+      if (sale.party_id) {
+        db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(balanceReduction, sale.party_id);
+      }
+      if (sale.customer_id) {
+        db.prepare('UPDATE customers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(balanceReduction, sale.customer_id);
+      }
     }
     if (refundAmount > 0) {
       db.prepare(`
@@ -2463,6 +2609,18 @@ function cancelSaleReturn(id) {
       updateStock.run(item.quantity, item.productId);
       movement.run(item.productId, -Number(item.quantity), returnId, `لغو مرجوعی ${record.return_number}`);
     }
+    const sale = db.prepare('SELECT party_id, customer_id FROM sales WHERE id = ?').get(record.sale_id);
+    const balanceIncrease = Number(record.balance_adjustment || 0);
+    if (balanceIncrease > 0) {
+      if (sale?.party_id) {
+        db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(balanceIncrease, sale.party_id);
+      }
+      if (sale?.customer_id) {
+        db.prepare('UPDATE customers SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(balanceIncrease, sale.customer_id);
+      }
+    }
     db.prepare("UPDATE sales_returns SET status = 'cancelled' WHERE id = ?").run(returnId);
     db.prepare("DELETE FROM cash_transactions WHERE reference_type = 'sales_return' AND reference_id = ?").run(returnId);
     db.exec('COMMIT');
@@ -2533,10 +2691,11 @@ function createPurchaseReturn(payload = {}) {
   const returnNumber = String(payload.returnNumber || '').trim() || nextPurchaseReturnNumber(db, date);
   db.exec('BEGIN IMMEDIATE');
   try {
+    const balanceReduction = Math.min(total, Number(purchase.remaining_amount || 0));
     const result = db.prepare(`
-      INSERT INTO purchase_returns (return_number, purchase_id, date, total, refund_amount, reason, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'completed')
-    `).run(returnNumber, purchaseId, date, total, refundAmount, String(payload.reason || '').trim());
+      INSERT INTO purchase_returns (return_number, purchase_id, date, total, refund_amount, reason, status, balance_adjustment)
+      VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
+    `).run(returnNumber, purchaseId, date, total, refundAmount, String(payload.reason || '').trim(), balanceReduction);
     const returnId = Number(result.lastInsertRowid);
     const insertItem = db.prepare(`
       INSERT INTO purchase_return_items (return_id, purchase_item_id, product_id, quantity, unit_price, discount, total)
@@ -2560,11 +2719,11 @@ function createPurchaseReturn(payload = {}) {
         VALUES ('income', 'purchase_return', ?, ?, ?, ?, 'purchase_return', ?)
       `).run(refundAmount, String(payload.method || 'cash').match(/^(cash|card|bank|other)$/)?.[1] || 'cash', date, `دریافت بابت مرجوعی خرید ${returnNumber}`, returnId);
     }
-    if (purchase.supplier_id && total > 0) {
-      db.prepare('UPDATE suppliers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(total, purchase.supplier_id);
+    if (purchase.supplier_id && balanceReduction > 0) {
+      db.prepare('UPDATE suppliers SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(balanceReduction, purchase.supplier_id);
     }
-    if (purchase.party_id && total > 0) {
-      db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(total, purchase.party_id);
+    if (purchase.party_id && balanceReduction > 0) {
+      db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(balanceReduction, purchase.party_id);
     }
     db.exec('COMMIT');
     auditLog('purchase_return.create', 'purchase_return', returnId, { returnNumber, total, refundAmount });
@@ -2628,8 +2787,9 @@ function cancelPurchaseReturn(id) {
       movement.run(item.productId, Number(item.quantity), returnId, `لغو مرجوعی خرید ${record.return_number}`);
     }
     const purchase = db.prepare('SELECT supplier_id, party_id FROM purchases WHERE id = ?').get(record.purchase_id);
-    if (purchase?.supplier_id) db.prepare('UPDATE suppliers SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(record.total, purchase.supplier_id);
-    if (purchase?.party_id) db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(record.total, purchase.party_id);
+    const balanceIncrease = Number(record.balance_adjustment || 0);
+    if (purchase?.supplier_id && balanceIncrease > 0) db.prepare('UPDATE suppliers SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(balanceIncrease, purchase.supplier_id);
+    if (purchase?.party_id && balanceIncrease > 0) db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(balanceIncrease, purchase.party_id);
     db.prepare("UPDATE purchase_returns SET status = 'cancelled' WHERE id = ?").run(returnId);
     db.prepare("DELETE FROM cash_transactions WHERE reference_type = 'purchase_return' AND reference_id = ?").run(returnId);
     db.exec('COMMIT');
@@ -2695,7 +2855,8 @@ function getCashSummary(payload = {}) {
     FROM invoice_payments ip
     LEFT JOIN sales s ON s.id = ip.sale_id
     LEFT JOIN purchases p ON p.id = ip.purchase_id
-    WHERE (? = '' OR substr(ip.paid_at, 1, 10) >= ?) AND (? = '' OR substr(ip.paid_at, 1, 10) <= ?)
+    WHERE (? = '' OR COALESCE(s.date, p.date, substr(ip.paid_at, 1, 10)) >= ?)
+      AND (? = '' OR COALESCE(s.date, p.date, substr(ip.paid_at, 1, 10)) <= ?)
   `).get(from, from, to, to);
   const income = Number(manual.income || 0) + Number(payments.salesIncome || 0);
   const expense = Number(manual.expense || 0) + Number(payments.purchaseExpense || 0);
@@ -2834,7 +2995,9 @@ function getPartyLedger(partyId, payload = {}) {
   for (const row of sales) {
     add(row.date, 'sale', row.invoiceNumber, row.id, row.source === 'daily' ? 'فروش روزانه' : 'فاکتور فروش', row.total, 0);
     const payments = db.prepare('SELECT id, amount, paid_at AS paidAt, method FROM invoice_payments WHERE sale_id = ? ORDER BY id').all(row.id);
-    for (const payment of payments) add(String(payment.paidAt).slice(0, 10), 'payment', row.invoiceNumber, payment.id, `دریافت فروش (${payment.method})`, 0, payment.amount);
+    // Keep invoice and its payments together in period ledgers, even when a
+    // payment was entered after the invoice date.
+    for (const payment of payments) add(row.date, 'payment', row.invoiceNumber, payment.id, `دریافت فروش (${payment.method})`, 0, payment.amount);
   }
   const saleReturns = db.prepare(`
     SELECT sr.id, sr.return_number AS returnNumber, sr.date, sr.total
@@ -2846,7 +3009,7 @@ function getPartyLedger(partyId, payload = {}) {
   for (const row of purchases) {
     add(row.date, 'purchase', row.invoiceNumber, row.id, 'فاکتور خرید', 0, row.total);
     const payments = db.prepare('SELECT id, amount, paid_at AS paidAt, method FROM invoice_payments WHERE purchase_id = ? ORDER BY id').all(row.id);
-    for (const payment of payments) add(String(payment.paidAt).slice(0, 10), 'payment', row.invoiceNumber, payment.id, `پرداخت خرید (${payment.method})`, payment.amount, 0);
+    for (const payment of payments) add(row.date, 'payment', row.invoiceNumber, payment.id, `پرداخت خرید (${payment.method})`, payment.amount, 0);
   }
   const purchaseReturns = db.prepare(`
     SELECT pr.id, pr.return_number AS returnNumber, pr.date, pr.total
@@ -2928,6 +3091,7 @@ module.exports = {
   createPurchase,
   listSales,
   listPurchases,
+  getPurchasePriceHistory,
   getNextInvoiceNumber,
   getInvoiceDetails,
   updateSale,
@@ -2994,4 +3158,5 @@ module.exports = {
   listStockMovements
   ,previewProductImport
   ,importProducts
+  ,getCurrencyInputFactor
 };

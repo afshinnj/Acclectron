@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   closeDatabase,
   createPurchase,
+  getPurchasePriceHistory,
   createParty,
   listParties,
   updateParty,
@@ -46,7 +47,8 @@ const {
   logoutUser,
   getProfitLossReport,
   closeDailyAccount,
-  listDailyClosures
+  listDailyClosures,
+  importProducts
 } = require('../src/main/database');
 
 function openTestDatabase() {
@@ -66,6 +68,69 @@ test('creates the product and purchase foundation with foreign keys and indexes'
     }
     assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_purchase_items_product_id'").get());
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('imports product prices using the configured currency unit', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)')
+      .run('currencyInputUnit', JSON.stringify('rial'));
+    const result = importProducts([{
+      sourceRow: 2,
+      category: 'وارداتی',
+      name: 'کالای ریالی',
+      stock: 1,
+      purchasePrice: 800000,
+      wholesalePrice: 900000,
+      retailPrice: 1000000
+    }]);
+    assert.equal(result.imported, 1);
+    const prices = db.prepare('SELECT purchase_price, wholesale_price, retail_price FROM products WHERE name = ?')
+      .get('کالای ریالی');
+    assert.deepEqual({ ...prices }, {
+      purchase_price: 8000000,
+      wholesale_price: 9000000,
+      retail_price: 10000000
+    });
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('updates existing products when Persian and Arabic letter forms differ', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)')
+      .run('currencyInputUnit', JSON.stringify('rial'));
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('991', 'لباسشويي');
+    db.prepare(`
+      INSERT INTO products
+        (code, name, sale_price, purchase_price, wholesale_price, retail_price, stock, category_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('991001', 'گيربکس حاير فلکه بزرگ', 100, 50, 75, 100, 2, category.lastInsertRowid);
+    const result = importProducts([{
+      sourceRow: 2,
+      category: 'لباسشویی',
+      name: 'گیربکس حایر فلکه بزرگ',
+      stock: 60,
+      purchasePrice: 6800000,
+      wholesalePrice: 7500000,
+      retailPrice: 870000
+    }], 'update');
+    assert.equal(result.updated, 1);
+    const product = db.prepare('SELECT purchase_price, wholesale_price, retail_price, stock FROM products WHERE code = ?')
+      .get('991001');
+    assert.deepEqual({ ...product }, {
+      purchase_price: 68000000,
+      wholesale_price: 75000000,
+      retail_price: 8700000,
+      stock: 60
+    });
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -121,6 +186,47 @@ test('purchase preserves historical price and updates current product price tran
     );
     createPurchase({ invoiceNumber: 'P-TEST-002', items: [{ productId: product.id, quantity: 1, unitPrice: 200000 }] });
     assert.equal(db.prepare('SELECT unit_price FROM purchase_items WHERE purchase_id = ?').get(result.id).unit_price, 123456);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('reads purchase-price history from completed invoice items and excludes cancelled purchases', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    const supplier = createParty({ firstName: 'تأمین', lastName: 'کننده', partyType: 'supplier' });
+    const first = createPurchase({
+      invoiceNumber: 'P-HISTORY-001',
+      partyId: supplier.id,
+      items: [{ productId: product.id, quantity: 4, unitPrice: 100000, discount: 20000 }]
+    });
+    const second = createPurchase({
+      invoiceNumber: 'P-HISTORY-002',
+      items: [{ productId: product.id, quantity: 2, unitPrice: 140000 }]
+    });
+    db.prepare("UPDATE purchases SET status = 'cancelled' WHERE id = ?").run(second.id);
+
+    const history = getPurchasePriceHistory(product.id, { partyId: supplier.id, limit: 10 });
+
+    assert.equal(history.summary.count, 1);
+    assert.equal(history.summary.minUnitPrice, 100000);
+    assert.equal(history.summary.averageEffectiveUnitPrice, 95000);
+    assert.equal(history.summary.selectedSupplierCount, 1);
+    assert.deepEqual(history.items.map((row) => ({
+      invoiceNumber: row.invoiceNumber,
+      unitPrice: row.unitPrice,
+      discount: row.discount,
+      effectiveUnitPrice: row.effectiveUnitPrice,
+      isSelectedSupplier: row.isSelectedSupplier
+    })), [{
+      invoiceNumber: first.invoiceNumber,
+      unitPrice: 100000,
+      discount: 20000,
+      effectiveUnitPrice: 95000,
+      isSelectedSupplier: 1
+    }]);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -239,6 +345,43 @@ test('settling a legacy sale updates its customer balance without a party record
     assert.equal(
       db.prepare('SELECT balance FROM customers WHERE id = ?').get(Number(customer.lastInsertRowid)).balance,
       60000
+    );
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('settles a completed purchase while preserving its immutable commercial details', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    const purchase = createPurchase({
+      invoiceNumber: 'P-SETTLE-COMPLETED',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 100000 }]
+    });
+
+    const settled = settleInvoice('purchase', purchase.id, { method: 'card', amount: 400 });
+
+    assert.equal(settled.paid_amount, 40000);
+    assert.equal(settled.remaining_amount, 60000);
+    assert.deepEqual(
+      db.prepare('SELECT invoice_number, total, paid_amount, remaining_amount, status FROM purchases WHERE id = ?').get(purchase.id),
+      {
+        invoice_number: 'P-SETTLE-COMPLETED',
+        total: 100000,
+        paid_amount: 40000,
+        remaining_amount: 60000,
+        status: 'completed'
+      }
+    );
+    assert.equal(
+      db.prepare('SELECT amount FROM invoice_payments WHERE purchase_id = ?').get(purchase.id).amount,
+      40000
+    );
+    assert.throws(
+      () => db.prepare('UPDATE purchases SET total = ? WHERE id = ?').run(1, purchase.id),
+      /immutable/
     );
   } finally {
     closeDatabase();

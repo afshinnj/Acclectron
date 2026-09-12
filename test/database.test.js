@@ -16,6 +16,8 @@ const {
   getSalesReport,
   getDashboardSummary,
   createSale,
+  mergeDailySales,
+  listSales,
   updateSale,
   settleInvoice,
   listPurchases,
@@ -49,15 +51,26 @@ const {
   closeDailyAccount,
   listDailyClosures,
   importProducts
+  ,createProduct
+  ,listProducts
+  ,getNextProductCode
+  ,updateProduct
+  ,updateProductQuick
 } = require('../src/main/database');
 
-function openTestDatabase() {
+function openTestDatabase({ fixtureProduct = true } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'accletron-db-'));
-  return { directory, db: getDatabase(directory) };
+  const db = getDatabase(directory);
+  if (fixtureProduct) {
+    db.prepare(
+      'INSERT INTO products (code, name, barcode, sale_price, stock, minimum_stock) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('TEST-001', 'کالای آزمون', '0000000000000', 8500000, 24, 5);
+  }
+  return { directory, db };
 }
 
 test('creates the product and purchase foundation with foreign keys and indexes', () => {
-  const { directory, db } = openTestDatabase();
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
   try {
     for (const table of ['products', 'categories', 'units', 'suppliers', 'parties', 'purchases', 'purchase_items', 'stock_movements', 'sales_returns', 'sales_return_items', 'purchase_returns', 'purchase_return_items', 'cash_transactions']) {
       assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
@@ -68,6 +81,10 @@ test('creates the product and purchase foundation with foreign keys and indexes'
     }
     assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_purchase_items_product_id'").get());
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM products').get().count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM customers').get().count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM units').get().count, 8);
+    assert.ok(db.prepare("SELECT id FROM users WHERE username = 'admin'").get());
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -96,6 +113,131 @@ test('imports product prices using the configured currency unit', () => {
       wholesale_price: 9000000,
       retail_price: 10000000
     });
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('persists auto-calculated selling prices and exposes retail price in product search', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('777', 'آزمایشی');
+    const product = createProduct({
+      name: 'کالای قیمت‌دار',
+      categoryId: Number(category.lastInsertRowid),
+      purchasePrice: 100000,
+      wholesalePrice: 0,
+      retailPrice: 0
+    });
+    const stored = db.prepare('SELECT purchase_price, wholesale_price, retail_price, sale_price FROM products WHERE id = ?').get(product.id);
+    assert.deepEqual({ ...stored }, {
+      purchase_price: 100000,
+      wholesale_price: 120000,
+      retail_price: 130000,
+      sale_price: 130000
+    });
+    const found = listProducts('کالای قیمت‌دار', '').find((row) => row.id === product.id);
+    assert.equal(found.salePrice, 130000);
+    assert.equal(found.wholesalePrice, 120000);
+    assert.equal(found.purchasePrice, 100000);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('calculates the next product code from the highest code in its category', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('8', 'دسته کدگذاری');
+    const insert = db.prepare('INSERT INTO products (code, name, sale_price, category_id) VALUES (?, ?, ?, ?)');
+    for (let sequence = 1; sequence <= 8; sequence += 1) {
+      insert.run(`8${String(sequence).padStart(3, '0')}`, `کالای ${sequence}`, 1000, category.lastInsertRowid);
+    }
+    assert.equal(getNextProductCode(Number(category.lastInsertRowid)), '8009');
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('quick product update preserves purchase and wholesale prices when omitted', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('778', 'دسته تست');
+    const product = createProduct({
+      name: 'کالای ذخیره سریع',
+      categoryId: Number(category.lastInsertRowid),
+      purchasePrice: 100000,
+      wholesalePrice: 120000,
+      retailPrice: 130000,
+      stock: 4
+    });
+    updateProductQuick(product.id, { retailPrice: 135000, stock: 7 });
+    const stored = db.prepare('SELECT purchase_price, wholesale_price, retail_price, sale_price, stock FROM products WHERE id = ?').get(product.id);
+    assert.deepEqual({ ...stored }, { purchase_price: 100000, wholesale_price: 120000, retail_price: 135000, sale_price: 135000, stock: 7 });
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects duplicate product names after Persian identity normalization', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const firstCategory = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('781', 'قطعات');
+    const secondCategory = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('782', 'لوازم');
+    createProduct({
+      name: 'گیربکس حایر ۱۰ شیار',
+      categoryId: Number(firstCategory.lastInsertRowid),
+      retailPrice: 100000
+    });
+
+    assert.throws(
+      () => createProduct({
+        name: '  گيربکس-حاير 10 شيار  ',
+        categoryId: Number(secondCategory.lastInsertRowid),
+        retailPrice: 110000
+      }),
+      /قبلاً ثبت شده است/
+    );
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM products').get().count, 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects equivalent duplicate barcodes and allows a product to keep its own identity while editing', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('783', 'بارکد');
+    const product = createProduct({
+      name: 'محصول اول',
+      barcode: '۶۲۶-۱۲۳ ۴۵۶',
+      categoryId: Number(category.lastInsertRowid),
+      retailPrice: 100000
+    });
+
+    assert.throws(
+      () => createProduct({
+        name: 'محصول دوم',
+        barcode: '626123456',
+        categoryId: Number(category.lastInsertRowid),
+        retailPrice: 120000
+      }),
+      /بارکد واردشده قبلاً/
+    );
+
+    const updated = updateProduct(product.id, {
+      name: 'محصول اول',
+      barcode: '626123456',
+      categoryId: Number(category.lastInsertRowid),
+      retailPrice: 130000
+    });
+    assert.equal(updated.id, product.id);
+    assert.equal(updated.salePrice, 130000);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -567,6 +709,80 @@ test('dashboard summary exposes management charts and operational lists', () => 
   }
 });
 
+test('records a partial payment on a sales invoice and keeps the correct remaining balance', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    const customer = createParty({ firstName: 'مشتری پرداختی', partyType: 'customer' });
+    const sale = createSale({
+      invoiceNumber: 'S-PARTIAL-PAY-001', partyId: customer.id, date: '2026-09-10',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }],
+      payments: [{ method: 'cash', amount: 800 }]
+    });
+    assert.equal(sale.total, 200000);
+    assert.equal(sale.paidAmount, 80000);
+    assert.equal(sale.remainingAmount, 120000);
+    assert.equal(db.prepare('SELECT amount FROM invoice_payments WHERE sale_id = ?').get(sale.id).amount, 80000);
+    assert.equal(db.prepare('SELECT remaining_amount FROM sales WHERE id = ?').get(sale.id).remaining_amount, 120000);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('merges same-date daily sales into one customer invoice without changing stock twice', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id, stock FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 20, purchase_price = 500 WHERE id = ?').run(product.id);
+    const customer = createParty({ firstName: 'مشتری ادغام', partyType: 'customer' });
+    const first = createSale({
+      invoiceNumber: 'S-MERGE-001', source: 'daily', date: '2026-09-10',
+      items: [{ productId: product.id, quantity: 2, unitPrice: 1000 }], paidAmount: 2000
+    });
+    const second = createSale({
+      invoiceNumber: 'S-MERGE-002', source: 'daily', date: '2026-09-10',
+      items: [{ productId: product.id, quantity: 3, unitPrice: 1000 }], paidAmount: 3000
+    });
+    const otherDate = createSale({
+      invoiceNumber: 'S-MERGE-003', source: 'daily', date: '2026-09-11',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }], paidAmount: 1000
+    });
+    assert.throws(
+      () => mergeDailySales({ saleIds: [first.id, otherDate.id], date: '2026-09-10', partyId: customer.id }),
+      /یک تاریخ مشترک/
+    );
+    const stockAfterDailySales = db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock;
+
+    const merged = mergeDailySales({ saleIds: [first.id, second.id], date: '2026-09-10', partyId: customer.id });
+    const target = db.prepare('SELECT * FROM sales WHERE id = ?').get(merged.id);
+    const sourceRows = db.prepare('SELECT status, paid_amount, remaining_amount FROM sales WHERE id IN (?, ?) ORDER BY id').all(first.id, second.id);
+    assert.equal(target.source, 'invoice');
+    assert.equal(target.party_id, customer.id);
+    assert.equal(target.date, '2026-09-10');
+    assert.equal(target.total, 500000);
+    assert.equal(target.paid_amount, 500000);
+    assert.equal(target.remaining_amount, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sale_items WHERE sale_id = ?').get(merged.id).count, 2);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sale_merge_sources WHERE merged_sale_id = ?').get(merged.id).count, 2);
+    assert.deepEqual(sourceRows.map((row) => ({ ...row })), [
+      { status: 'cancelled', paid_amount: 0, remaining_amount: 0 },
+      { status: 'cancelled', paid_amount: 0, remaining_amount: 0 }
+    ]);
+    assert.equal(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock, stockAfterDailySales);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM invoice_payments WHERE sale_id = ?').get(merged.id).count, 2);
+    assert.equal(listSales({}).some((sale) => sale.id === first.id), false);
+    assert.equal(listSales({ status: 'merged' }).filter((sale) => sale.mergedIntoSaleId === merged.id).length, 2);
+    assert.throws(
+      () => mergeDailySales({ saleIds: [merged.id], date: '2026-09-10', partyId: customer.id }),
+      /فقط فاکتورهای فعالِ فروش روزانه/
+    );
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('sales report combines daily and formal sales with profit and product breakdown', () => {
   const { directory, db } = openTestDatabase();
   try {
@@ -717,6 +933,10 @@ test('builds a complete party ledger from sales, purchases and payments', () => 
     assert.equal(ledger.closingBalance, 48000);
     assert.equal(ledger.events.length, 3);
     assert.deepEqual(ledger.events.map((event) => event.kind), ['sale', 'payment', 'purchase']);
+    const rangedLedger = getPartyLedger(party.id, { from: '2026-09-02', to: '2026-09-02' });
+    assert.equal(rangedLedger.openingBalance, 50000);
+    assert.equal(rangedLedger.closingBalance, 48000);
+    assert.equal(rangedLedger.events.length, 1);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

@@ -107,6 +107,12 @@ function getDatabase(userDataPath) {
       profit INTEGER NOT NULL DEFAULT 0,
       price_type TEXT NOT NULL DEFAULT 'retail'
     );
+    CREATE TABLE IF NOT EXISTS sale_merge_sources (
+      source_sale_id INTEGER PRIMARY KEY REFERENCES sales(id) ON DELETE RESTRICT,
+      merged_sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE RESTRICT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (source_sale_id <> merged_sale_id)
+    );
     CREATE TABLE IF NOT EXISTS stock_movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL REFERENCES products(id),
@@ -474,23 +480,6 @@ function getDatabase(userDataPath) {
   }
   database.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(1);
 
-  const count = database.prepare('SELECT COUNT(*) AS count FROM products').get().count;
-  if (count === 0) {
-    const insert = database.prepare(
-      'INSERT INTO products (code, name, barcode, sale_price, stock, minimum_stock) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    insert.run('P-1001', 'دفتر یادداشت', '6260000000011', 8500000, 24, 5);
-    insert.run('P-1002', 'خودکار آبی', '6260000000028', 3500000, 8, 10);
-    insert.run('P-1003', 'پوشه اداری', '6260000000035', 12000000, 16, 4);
-  }
-  const customerCount = database.prepare('SELECT COUNT(*) AS count FROM customers').get().count;
-  if (customerCount === 0) {
-    database.prepare('INSERT INTO customers (code, name, phone) VALUES (?, ?, ?)').run(
-      'C-0001',
-      'مشتری عمومی',
-      ''
-    );
-  }
   const userCount = database.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (userCount === 0) {
     const { passwordHash, passwordSalt } = hashPassword('admin123');
@@ -1109,7 +1098,8 @@ function listProducts(query = '', categoryId = '') {
   const category = categoryId ? Number(categoryId) : null;
   return db.prepare(`
     SELECT p.id, p.code, p.name, p.barcode,
-      p.sale_price AS salePrice, p.purchase_price AS purchasePrice,
+      CASE WHEN p.retail_price > 0 THEN p.retail_price ELSE p.sale_price END AS salePrice,
+      p.purchase_price AS purchasePrice,
       p.wholesale_price AS wholesalePrice, p.stock,
       p.minimum_stock AS minimumStock, p.category_id AS categoryId,
       p.unit_id AS unitId, p.description, p.is_active AS isActive,
@@ -1200,12 +1190,16 @@ function normalizeProductPayload(payload = {}) {
   const stock = Number(payload.stock ?? 0);
   const minimumStock = Number(payload.minimumStock ?? 0);
   const purchasePrice = Math.max(0, Math.round(Number(payload.purchasePrice) || 0));
-  const wholesaleInput = Math.max(0, Math.round(Number(payload.wholesalePrice) || 0));
-  const retailInput = Math.max(0, Math.round(Number(payload.retailPrice) || 0));
-  // If selling prices are omitted, derive them from purchase price using the
-  // standard margins and round upward to a whole stored currency unit.
-  const wholesalePrice = wholesaleInput || (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.2) : 0);
-  const retailPrice = retailInput || (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.3) : 0);
+  // Use manually entered selling prices when provided; otherwise derive them
+  // from the purchase price so API/import callers keep the automatic behavior.
+  const requestedWholesale = Number(payload.wholesalePrice);
+  const requestedRetail = Number(payload.retailPrice);
+  const wholesalePrice = requestedWholesale > 0
+    ? Math.round(requestedWholesale)
+    : (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.2) : 0);
+  const retailPrice = requestedRetail > 0
+    ? Math.round(requestedRetail)
+    : (purchasePrice > 0 ? Math.ceil(purchasePrice * 1.3) : 0);
   const prices = [purchasePrice, wholesalePrice, retailPrice];
   if (![stock, minimumStock].every((value) => Number.isFinite(value) && value >= 0)) {
     throw new Error('موجودی و حداقل موجودی باید عدد معتبر باشند.');
@@ -1222,6 +1216,78 @@ function normalizeProductPayload(payload = {}) {
     minimumStock,
     description: String(payload.description || '').trim()
   };
+}
+
+function normalizeProductIdentity(value = '') {
+  return normalizePersianText(String(value).normalize('NFKC'))
+    .toLowerCase()
+    .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/[ؤ]/g, 'و')
+    .replace(/[ئ]/g, 'ی')
+    .replace(/[ةۀ]/g, 'ه')
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+    .replace(/[\p{P}\p{S}_]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeProductBarcode(value = '') {
+  return String(value).normalize('NFKC')
+    .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[\s\u200c\u200d\u200e\u200f\-_]+/g, '')
+    .toUpperCase();
+}
+
+function assertProductIsUnique(db, product, excludeId = null) {
+  const requestedName = normalizeProductIdentity(product.name);
+  const requestedBarcode = product.barcode ? normalizeProductBarcode(product.barcode) : '';
+  const rows = db.prepare(`
+    SELECT p.id, p.code, p.name, p.barcode, p.is_active AS isActive,
+      COALESCE(c.name, '') AS categoryName
+    FROM products p
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE (? IS NULL OR p.id <> ?)
+  `).all(excludeId, excludeId);
+
+  if (requestedBarcode) {
+    const duplicateBarcode = rows.find((row) => row.barcode
+      && normalizeProductBarcode(row.barcode) === requestedBarcode);
+    if (duplicateBarcode) {
+      throw new Error(`بارکد واردشده قبلاً برای کالای «${duplicateBarcode.name}» با کد ${duplicateBarcode.code} ثبت شده است.`);
+    }
+  }
+
+  const duplicateName = rows.find((row) => normalizeProductIdentity(row.name) === requestedName);
+  if (duplicateName) {
+    const category = duplicateName.categoryName ? ` در دستهٔ «${duplicateName.categoryName}»` : '';
+    const inactive = duplicateName.isActive ? '' : ' (غیرفعال)';
+    throw new Error(`کالای «${duplicateName.name}» با کد ${duplicateName.code}${category} قبلاً ثبت شده است${inactive}.`);
+  }
+}
+
+function checkProductDuplicate(payload = {}, excludeId = null) {
+  const db = requireDatabase();
+  const name = String(payload.name || '').trim();
+  const barcode = String(payload.barcode || '').trim();
+  const requestedName = normalizeProductIdentity(name);
+  const requestedBarcode = barcode ? normalizeProductBarcode(barcode) : '';
+  if (!requestedName && !requestedBarcode) return { duplicate: false };
+  const normalizedExcludeId = Number(excludeId);
+  const rows = db.prepare(`
+    SELECT p.id, p.code, p.name, p.barcode, p.is_active AS isActive,
+      COALESCE(c.name, '') AS categoryName
+    FROM products p LEFT JOIN categories c ON c.id = p.category_id
+    WHERE (? IS NULL OR p.id <> ?)
+  `).all(Number.isInteger(normalizedExcludeId) && normalizedExcludeId > 0 ? normalizedExcludeId : null,
+    Number.isInteger(normalizedExcludeId) && normalizedExcludeId > 0 ? normalizedExcludeId : null);
+  const duplicateBarcode = requestedBarcode && rows.find((row) => row.barcode && normalizeProductBarcode(row.barcode) === requestedBarcode);
+  if (duplicateBarcode) return { duplicate: true, field: 'barcode', name: duplicateBarcode.name, code: duplicateBarcode.code };
+  const duplicateName = requestedName && rows.find((row) => normalizeProductIdentity(row.name) === requestedName);
+  if (duplicateName) return { duplicate: true, field: 'name', name: duplicateName.name, code: duplicateName.code };
+  return { duplicate: false };
 }
 
 function getCategoryCode(categoryId) {
@@ -1246,6 +1312,14 @@ function generateProductCode(categoryId, excludeId = null) {
   return `${prefix}${String(sequence).padStart(3, '0')}`;
 }
 
+function getNextProductCode(categoryId, excludeId = null) {
+  const normalizedExcludeId = Number(excludeId);
+  return generateProductCode(
+    Number(categoryId),
+    Number.isInteger(normalizedExcludeId) && normalizedExcludeId > 0 ? normalizedExcludeId : null
+  );
+}
+
 function generateCategoryCode() {
   const db = requireDatabase();
   const rows = db.prepare('SELECT code FROM categories').all();
@@ -1262,15 +1336,12 @@ function previewProductImport(rows = []) {
   const categories = db.prepare('SELECT id, name, code FROM categories WHERE is_active = 1').all();
   const categoryByName = new Map(categories.map((category) => [normalizePersianText(category.name), category]));
   const existingNames = new Set(
-    db.prepare('SELECT name, category_id AS categoryId FROM products').all()
-      .map((product) => `${normalizePersianText(product.name)}|${product.categoryId || ''}`)
+    db.prepare('SELECT name FROM products').all()
+      .map((product) => normalizeProductIdentity(product.name))
   );
   const categoryNames = [...new Set(rows.map((row) => row.category))];
   const missingCategories = categoryNames.filter((name) => !categoryByName.has(normalizePersianText(name)));
-  const duplicateRows = rows.filter((row) => {
-    const category = categoryByName.get(normalizePersianText(row.category));
-    return existingNames.has(`${normalizePersianText(row.name)}|${category?.id || ''}`);
-  });
+  const duplicateRows = rows.filter((row) => existingNames.has(normalizeProductIdentity(row.name)));
   const priceWarnings = rows.filter((row) =>
     row.purchasePrice === 0 || row.wholesalePrice === 0 || row.retailPrice === 0 ||
     (row.purchasePrice > 0 && row.wholesalePrice > 0 && row.retailPrice > 0 &&
@@ -1295,9 +1366,9 @@ function importProducts(rows = [], duplicateMode = 'skip') {
     const categoryRows = db.prepare('SELECT id, name, code FROM categories WHERE is_active = 1').all();
     const categoryByName = new Map(categoryRows.map((category) => [normalizePersianText(category.name), category]));
     const existingProducts = new Map(
-      db.prepare('SELECT id, name, category_id AS categoryId FROM products').all()
+      db.prepare('SELECT id, name FROM products').all()
         .map((product) => [
-          `${normalizePersianText(product.name)}|${product.categoryId || ''}`,
+          normalizeProductIdentity(product.name),
           Number(product.id)
         ])
     );
@@ -1323,7 +1394,7 @@ function importProducts(rows = [], duplicateMode = 'skip') {
           categoryByName.set(categoryName, category);
           result.categoriesCreated += 1;
         }
-        const duplicateKey = `${name}|${category.id}`;
+        const duplicateKey = normalizeProductIdentity(name);
         const stock = Number(row.stock);
         const currencyFactor = getCurrencyInputFactor();
         const purchasePrice = Math.round(Number(row.purchasePrice) * 100 / currencyFactor);
@@ -1365,7 +1436,9 @@ function importProducts(rows = [], duplicateMode = 'skip') {
 function createProduct(payload = {}) {
   const db = requireDatabase();
   const product = normalizeProductPayload(payload);
+  db.exec('BEGIN IMMEDIATE');
   try {
+    assertProductIsUnique(db, product);
     const result = db.prepare(`
       INSERT INTO products
         (code, name, barcode, sale_price, purchase_price, wholesale_price, retail_price,
@@ -1376,8 +1449,10 @@ function createProduct(payload = {}) {
       product.purchasePrice, product.wholesalePrice, product.retailPrice,
       product.stock, product.minimumStock, product.categoryId, product.unitId, product.description
     );
+    db.exec('COMMIT');
     return getProduct(Number(result.lastInsertRowid));
   } catch (error) {
+    db.exec('ROLLBACK');
     if (String(error.message).includes('UNIQUE')) throw new Error('کد یا بارکد کالا تکراری است.');
     throw error;
   }
@@ -1396,7 +1471,9 @@ function updateProduct(id, payload = {}) {
   const nextCode = Number(current.categoryId) === Number(product.categoryId)
     ? current.code
     : generateProductCode(product.categoryId, productId);
+  db.exec('BEGIN IMMEDIATE');
   try {
+    assertProductIsUnique(db, product, productId);
     db.prepare(`
       UPDATE products SET
         code = ?, name = ?, barcode = ?, sale_price = ?, purchase_price = ?,
@@ -1409,8 +1486,10 @@ function updateProduct(id, payload = {}) {
       product.stock, product.minimumStock, product.categoryId, product.unitId,
       product.description, productId
     );
+    db.exec('COMMIT');
     return getProduct(productId);
   } catch (error) {
+    db.exec('ROLLBACK');
     if (String(error.message).includes('UNIQUE')) throw new Error('کد یا بارکد کالا تکراری است.');
     throw error;
   }
@@ -1419,12 +1498,12 @@ function updateProduct(id, payload = {}) {
 function updateProductQuick(id, payload = {}) {
   const db = requireDatabase();
   const productId = Number(id);
-  const current = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+  const current = db.prepare('SELECT id, purchase_price AS purchasePrice, wholesale_price AS wholesalePrice, retail_price AS retailPrice, sale_price AS salePrice, stock FROM products WHERE id = ?').get(productId);
   if (!current) throw new Error('کالا پیدا نشد.');
-  const purchasePrice = Math.max(0, Math.round(Number(payload.purchasePrice) || 0));
-  const wholesalePrice = Math.max(0, Math.round(Number(payload.wholesalePrice) || 0));
-  const retailPrice = Math.max(0, Math.round(Number(payload.retailPrice) || 0));
-  const stock = Math.max(0, Number(payload.stock) || 0);
+  const purchasePrice = payload.purchasePrice === undefined ? Number(current.purchasePrice || 0) : Math.max(0, Math.round(Number(payload.purchasePrice) || 0));
+  const wholesalePrice = payload.wholesalePrice === undefined ? Number(current.wholesalePrice || 0) : Math.max(0, Math.round(Number(payload.wholesalePrice) || 0));
+  const retailPrice = payload.retailPrice === undefined ? Number(current.retailPrice || current.salePrice || 0) : Math.max(0, Math.round(Number(payload.retailPrice) || 0));
+  const stock = payload.stock === undefined ? Number(current.stock || 0) : Math.max(0, Number(payload.stock) || 0);
   db.prepare(`
     UPDATE products SET purchase_price = ?, wholesale_price = ?, retail_price = ?,
       sale_price = ?, stock = ?, updated_at = CURRENT_TIMESTAMP
@@ -1596,7 +1675,18 @@ function getDashboardSummary() {
   const monthSales = db.prepare(
     "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND substr(date, 1, 7) = ?"
   ).get(month);
+  const yesterday = new Date(`${today}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const yesterdayIso = yesterday.toISOString().slice(0, 10);
+  const yesterdaySales = db.prepare(
+    "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND date = ?"
+  ).get(yesterdayIso);
   const inventory = db.prepare('SELECT COALESCE(SUM(stock), 0) AS stock, COUNT(*) AS count FROM products WHERE is_active = 1').get();
+  const inventoryValue = db.prepare(`
+    SELECT COALESCE(SUM(stock * purchase_price), 0) AS purchaseValue,
+      COALESCE(SUM(stock * CASE WHEN retail_price > 0 THEN retail_price ELSE sale_price END), 0) AS retailValue
+    FROM products WHERE is_active = 1
+  `).get();
   const lowStock = db.prepare(
     'SELECT COUNT(*) AS count FROM products WHERE is_active = 1 AND stock <= minimum_stock'
   ).get();
@@ -1622,7 +1712,19 @@ function getDashboardSummary() {
     FROM sale_items si JOIN sales s ON s.id = si.sale_id
     JOIN products p ON p.id = si.product_id
     WHERE s.status = 'active' AND substr(s.date, 1, 7) = ?
-    GROUP BY p.id, p.name ORDER BY netSales DESC LIMIT 50
+    GROUP BY p.id, p.name ORDER BY quantity DESC, netSales DESC LIMIT 50
+  `).all(month);
+  const categorySales = db.prepare(`
+    SELECT COALESCE(c.name, 'بدون دسته‌بندی') AS categoryName,
+      COALESCE(SUM(si.total), 0) AS netSales,
+      COALESCE(SUM(si.quantity), 0) AS quantity
+    FROM sale_items si
+    JOIN sales s ON s.id = si.sale_id AND s.status = 'active'
+    JOIN products p ON p.id = si.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE substr(s.date, 1, 7) = ?
+    GROUP BY c.id, c.name
+    ORDER BY netSales DESC LIMIT 8
   `).all(month);
   const recentSales = db.prepare(`
     SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.source, s.total,
@@ -1658,12 +1760,18 @@ function getDashboardSummary() {
     todaySales: Number(todaySales.total),
     todayCount: Number(todaySales.count),
     monthSales: Number(monthSales.total),
+    yesterdaySales: Number(yesterdaySales.total),
+    salesChangePct: Number(yesterdaySales.total) > 0
+      ? Number(((Number(todaySales.total) - Number(yesterdaySales.total)) / Number(yesterdaySales.total) * 100).toFixed(1))
+      : (Number(todaySales.total) > 0 ? 100 : 0),
     inventory: Number(inventory.stock),
     productCount: Number(inventory.count),
+    inventoryValue: { purchase: Number(inventoryValue.purchaseValue), retail: Number(inventoryValue.retailValue) },
     lowStock: Number(lowStock.count),
     salesTrend: salesTrend.map((row) => ({ date: row.date, sales: Number(row.sales), profit: Number(row.profit) })),
     paymentBreakdown: paymentBreakdown.map((row) => ({ method: row.method, amount: Number(row.amount) })),
     topProducts: topProducts.map((row) => ({ name: row.name, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
+    categorySales: categorySales.map((row) => ({ categoryName: row.categoryName, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
     recentSales: recentSales.map((row) => ({ ...row, total: Number(row.total), paidAmount: Number(row.paidAmount), remainingAmount: Number(row.remainingAmount) })),
     topDebtors: topDebtors.map((row) => ({ partyName: row.partyName, balance: Number(row.balance) })),
     cashMonth: { income: Number(cashMonth.income), expense: Number(cashMonth.expense) },
@@ -1857,7 +1965,7 @@ function getSalesReport(payload = {}) {
     LEFT JOIN item_totals it ON it.sale_id = s.id
     WHERE ${where}
     GROUP BY p.id, p.name, p.code, c.name
-    ORDER BY netSales DESC LIMIT 20
+    ORDER BY quantity DESC, netSales DESC LIMIT 20
   `).all(...params);
   const byCustomer = db.prepare(`
     SELECT COALESCE(NULLIF(TRIM(s.party_name), ''), 'مشتری متفرقه') AS customerName,
@@ -2196,7 +2304,19 @@ function invoiceListQuery(kind, payload = {}) {
   const term = `%${query}%`;
   const from = String(payload.from || '').trim();
   const to = String(payload.to || '').trim();
-  const status = ['active', 'completed', 'cancelled'].includes(String(payload.status)) ? String(payload.status) : '';
+  const requestedStatus = String(payload.status || '');
+  const showMerged = kind === 'sale' && requestedStatus === 'merged';
+  const status = ['active', 'completed', 'cancelled'].includes(requestedStatus) ? requestedStatus : '';
+  const mergeColumns = kind === 'sale'
+    ? `,
+      (SELECT merged_sale_id FROM sale_merge_sources WHERE source_sale_id = i.id) AS mergedIntoSaleId,
+      (SELECT target.invoice_number FROM sale_merge_sources sms JOIN sales target ON target.id = sms.merged_sale_id WHERE sms.source_sale_id = i.id) AS mergedIntoInvoiceNumber`
+    : ', NULL AS mergedIntoSaleId, NULL AS mergedIntoInvoiceNumber';
+  const mergeFilter = kind === 'sale'
+    ? (showMerged
+      ? 'AND EXISTS (SELECT 1 FROM sale_merge_sources sms WHERE sms.source_sale_id = i.id)'
+      : 'AND NOT EXISTS (SELECT 1 FROM sale_merge_sources sms WHERE sms.source_sale_id = i.id)')
+    : '';
   const rows = db.prepare(`
     SELECT i.id, i.invoice_number AS invoiceNumber, i.date, i.subtotal, i.discount, i.tax,
       i.total, i.paid_amount AS paidAmount, i.remaining_amount AS remainingAmount,
@@ -2205,12 +2325,14 @@ function invoiceListQuery(kind, payload = {}) {
       COALESCE(i.party_phone, p.phone, p.mobile, c.phone, s.phone, '') AS partyPhone,
       COALESCE(i.party_address, p.address, s.address, '') AS partyAddress,
       (SELECT COUNT(*) FROM ${kind === 'sale' ? 'sale_items' : 'purchase_items'} ii WHERE ii.${kind === 'sale' ? 'sale' : 'purchase'}_id = i.id) AS itemCount
+      ${mergeColumns}
     FROM ${table} i
     LEFT JOIN parties p ON p.id = i.party_id
     LEFT JOIN customers c ON c.id = i.${partyColumn}
     LEFT JOIN suppliers s ON s.id = i.${partyColumn}
     WHERE (? = '' OR i.invoice_number LIKE ? OR COALESCE(i.party_name, '') LIKE ? OR COALESCE(p.first_name || ' ' || p.last_name, '') LIKE ? OR COALESCE(c.name, '') LIKE ? OR COALESCE(s.name, '') LIKE ? OR COALESCE(c.phone, '') LIKE ? OR COALESCE(s.phone, '') LIKE ?)
       AND (? = '' OR i.date >= ?) AND (? = '' OR i.date <= ?)
+      ${mergeFilter}
       AND (? = '' OR i.status = ?)
     ORDER BY i.date DESC, i.id DESC
     LIMIT 500
@@ -2220,6 +2342,112 @@ function invoiceListQuery(kind, payload = {}) {
 
 function listSales(payload = {}) { return invoiceListQuery('sale', payload); }
 function listPurchases(payload = {}) { return invoiceListQuery('purchase', payload); }
+
+function mergeDailySales(payload = {}) {
+  const db = requireDatabase();
+  requirePermission('sales');
+  const sourceIds = [...new Set((Array.isArray(payload.saleIds) ? payload.saleIds : [])
+    .map(Number)
+    .filter((id) => Number.isInteger(id) && id > 0))];
+  if (!sourceIds.length) throw new Error('حداقل یک فاکتور فروش روزانه را انتخاب کنید.');
+  const date = String(payload.date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('تاریخ فاکتور ادغامی معتبر نیست.');
+  const partyId = Number(payload.partyId);
+  if (!Number.isInteger(partyId) || partyId <= 0) throw new Error('انتخاب مشتری برای فاکتور ادغامی الزامی است.');
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const placeholders = sourceIds.map(() => '?').join(', ');
+    const sources = db.prepare(`
+      SELECT id, invoice_number AS invoiceNumber, date, subtotal, discount, tax, total,
+        paid_amount AS paidAmount, remaining_amount AS remainingAmount,
+        cost_total AS costTotal, profit_total AS profitTotal, item_count AS itemCount,
+        source, status
+      FROM sales WHERE id IN (${placeholders}) ORDER BY id
+    `).all(...sourceIds);
+    if (sources.length !== sourceIds.length) throw new Error('یکی از فاکتورهای انتخاب‌شده پیدا نشد.');
+    if (sources.some((sale) => sale.source !== 'daily' || sale.status !== 'active' || sale.date !== date)) {
+      throw new Error('فقط فاکتورهای فعالِ فروش روزانه با یک تاریخ مشترک قابل ادغام هستند.');
+    }
+    const party = db.prepare(`
+      SELECT id, trim(first_name || ' ' || COALESCE(last_name, '')) AS name,
+        phone, mobile, address, party_type AS partyType
+      FROM parties WHERE id = ? AND is_active = 1
+    `).get(partyId);
+    if (!party || !['customer', 'both'].includes(party.partyType)) throw new Error('مشتری انتخاب‌شده معتبر نیست.');
+    const returnCount = db.prepare(`
+      SELECT COUNT(*) AS count FROM sales_returns
+      WHERE sale_id IN (${placeholders}) AND status = 'completed'
+    `).get(...sourceIds).count;
+    if (returnCount) throw new Error('فاکتور دارای مرجوعی قابل ادغام نیست.');
+    const installmentCount = db.prepare(`
+      SELECT COUNT(*) AS count FROM installment_plans
+      WHERE invoice_kind = 'sale' AND invoice_id IN (${placeholders}) AND status <> 'cancelled'
+    `).get(...sourceIds).count;
+    if (installmentCount) throw new Error('فاکتور دارای برنامه اقساط قابل ادغام نیست.');
+
+    const payments = db.prepare(`
+      SELECT id, sale_id AS saleId, amount FROM invoice_payments
+      WHERE sale_id IN (${placeholders}) ORDER BY id
+    `).all(...sourceIds);
+    const paymentTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const declaredPaid = sources.reduce((sum, sale) => sum + Number(sale.paidAmount || 0), 0);
+    if (paymentTotal !== declaredPaid) throw new Error('جمع پرداخت‌های یکی از فاکتورها با اطلاعات ثبت‌شده همخوانی ندارد.');
+
+    const totals = sources.reduce((result, sale) => ({
+      subtotal: result.subtotal + Number(sale.subtotal || 0),
+      discount: result.discount + Number(sale.discount || 0),
+      tax: result.tax + Number(sale.tax || 0),
+      total: result.total + Number(sale.total || 0),
+      paidAmount: result.paidAmount + Number(sale.paidAmount || 0),
+      remainingAmount: result.remainingAmount + Number(sale.remainingAmount || 0),
+      costTotal: result.costTotal + Number(sale.costTotal || 0),
+      profitTotal: result.profitTotal + Number(sale.profitTotal || 0),
+      itemCount: result.itemCount + Number(sale.itemCount || 0)
+    }), { subtotal: 0, discount: 0, tax: 0, total: 0, paidAmount: 0, remainingAmount: 0, costTotal: 0, profitTotal: 0, itemCount: 0 });
+    if (totals.total !== totals.paidAmount + totals.remainingAmount) throw new Error('مانده فاکتورهای انتخاب‌شده معتبر نیست.');
+    const invoiceNumber = nextInvoiceNumber(db, 'sale', date);
+    const sourceNumbers = sources.map((sale) => sale.invoiceNumber).join('، ');
+    const target = db.prepare(`
+      INSERT INTO sales
+        (invoice_number, party_id, party_name, party_phone, party_address, date, subtotal, discount, tax, total, paid_amount, remaining_amount, cost_total, profit_total, item_count, source, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'invoice', 'active', ?)
+    `).run(
+      invoiceNumber, party.id, party.name, party.phone || party.mobile || null, party.address || null,
+      date, totals.subtotal, totals.discount, totals.tax, totals.total, totals.paidAmount,
+      totals.remainingAmount, totals.costTotal, totals.profitTotal, totals.itemCount,
+      `ادغام فروش‌های روزانه: ${sourceNumbers}`
+    );
+    const mergedSaleId = Number(target.lastInsertRowid);
+    db.prepare(`
+      INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount, total, purchase_price, profit, price_type)
+      SELECT ?, product_id, quantity, unit_price, discount, total, purchase_price, profit, price_type
+      FROM sale_items WHERE sale_id IN (${placeholders}) ORDER BY id
+    `).run(mergedSaleId, ...sourceIds);
+    db.prepare(`UPDATE invoice_payments SET sale_id = ? WHERE sale_id IN (${placeholders})`).run(mergedSaleId, ...sourceIds);
+    db.prepare(`
+      INSERT INTO sale_merge_sources (source_sale_id, merged_sale_id)
+      VALUES ${sourceIds.map(() => '(?, ?)').join(', ')}
+    `).run(...sourceIds.flatMap((sourceId) => [sourceId, mergedSaleId]));
+    db.prepare(`
+      UPDATE sales
+      SET status = 'cancelled', paid_amount = 0, remaining_amount = 0,
+        notes = trim(COALESCE(notes, '') || CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE '\n' END || ?),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `).run(`ادغام‌شده در فاکتور ${invoiceNumber}`, ...sourceIds);
+    if (totals.remainingAmount > 0) {
+      db.prepare('UPDATE parties SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(totals.remainingAmount, party.id);
+    }
+    db.exec('COMMIT');
+    auditLog('sale.merge_daily', 'sale', mergedSaleId, { invoiceNumber, sourceSaleIds: sourceIds, sourceInvoiceNumbers: sources.map((sale) => sale.invoiceNumber) });
+    return { id: mergedSaleId, invoiceNumber, date, sourceSaleIds: sourceIds, ...totals };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 function getPurchasePriceHistory(productId, payload = {}) {
   const db = requireDatabase();
@@ -2904,7 +3132,8 @@ function getProfitLossReport(payload = {}) {
         - COALESCE((SELECT SUM(total) FROM sales_returns WHERE status='completed' AND sales_returns.date=dates.date), 0) AS netSales,
       COALESCE((SELECT SUM(cost_total) FROM sales WHERE status='active' AND sales.date=dates.date), 0)
         - COALESCE((SELECT SUM(sri.quantity*si.purchase_price) FROM sales_return_items sri JOIN sales_returns sr ON sr.id=sri.return_id LEFT JOIN sale_items si ON si.id=sri.sale_item_id WHERE sr.status='completed' AND sr.date=dates.date), 0) AS costTotal,
-      COALESCE((SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS expenses
+      COALESCE((SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS expenses,
+      COALESCE((SELECT SUM(CASE WHEN type='income' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS otherIncome
     FROM dates ORDER BY dates.date
   `).all(
     from, from, to, to,
@@ -2923,7 +3152,15 @@ function getProfitLossReport(payload = {}) {
     otherIncome,
     netProfit,
     invoiceCount: Number(sales.invoiceCount || 0),
-    byDate: byDate.map((row) => ({ ...row, netSales: Number(row.netSales || 0), costTotal: Number(row.costTotal || 0), expenses: Number(row.expenses || 0), grossProfit: Number(row.netSales || 0) - Number(row.costTotal || 0), netProfit: Number(row.netSales || 0) - Number(row.costTotal || 0) - Number(row.expenses || 0) }))
+    byDate: byDate.map((row) => ({
+      ...row,
+      netSales: Number(row.netSales || 0),
+      costTotal: Number(row.costTotal || 0),
+      expenses: Number(row.expenses || 0),
+      otherIncome: Number(row.otherIncome || 0),
+      grossProfit: Number(row.netSales || 0) - Number(row.costTotal || 0),
+      netProfit: Number(row.netSales || 0) - Number(row.costTotal || 0) + Number(row.otherIncome || 0) - Number(row.expenses || 0)
+    }))
   };
 }
 
@@ -2987,9 +3224,8 @@ function getPartyLedger(partyId, payload = {}) {
   const from = String(payload.from || '').trim();
   const to = String(payload.to || '').trim();
   const events = [];
-  const inRange = (date) => (!from || date >= from) && (!to || date <= to);
   const add = (date, kind, reference, referenceId, description, debit, credit) => {
-    if (inRange(date)) events.push({ date, kind, reference, referenceId, description, debit: Number(debit || 0), credit: Number(credit || 0) });
+    events.push({ date, kind, reference, referenceId, description, debit: Number(debit || 0), credit: Number(credit || 0) });
   };
   const sales = db.prepare(`SELECT id, invoice_number AS invoiceNumber, date, total, source FROM sales WHERE party_id = ? AND status = 'active' ORDER BY date, id`).all(id);
   for (const row of sales) {
@@ -3018,14 +3254,18 @@ function getPartyLedger(partyId, payload = {}) {
   `).all(id);
   for (const row of purchaseReturns) add(row.date, 'purchase_return', row.returnNumber, row.id, 'مرجوعی خرید', row.total, 0);
   events.sort((a, b) => a.date.localeCompare(b.date) || a.referenceId - b.referenceId);
-  let running = 0;
-  for (const event of events) {
+  const openingBalance = from
+    ? events.filter((event) => event.date < from).reduce((sum, event) => sum + event.debit - event.credit, 0)
+    : 0;
+  const rangedEvents = events.filter((event) => (!from || event.date >= from) && (!to || event.date <= to));
+  let running = openingBalance;
+  for (const event of rangedEvents) {
     running += event.debit - event.credit;
     event.balance = running;
   }
-  const debit = events.reduce((sum, event) => sum + event.debit, 0);
-  const credit = events.reduce((sum, event) => sum + event.credit, 0);
-  return { party, filters: { from, to }, openingBalance: 0, debit, credit, closingBalance: debit - credit, events };
+  const debit = rangedEvents.reduce((sum, event) => sum + event.debit, 0);
+  const credit = rangedEvents.reduce((sum, event) => sum + event.credit, 0);
+  return { party, filters: { from, to }, openingBalance, debit, credit, closingBalance: openingBalance + debit - credit, events: rangedEvents };
 }
 
 function adjustProductStock(productId, payload = {}) {
@@ -3093,12 +3333,15 @@ module.exports = {
   listPurchases,
   getPurchasePriceHistory,
   getNextInvoiceNumber,
+  getNextProductCode,
+  checkProductDuplicate,
   getInvoiceDetails,
   updateSale,
   settleInvoice,
   cancelInvoice,
   createProduct,
   createSale,
+  mergeDailySales,
   getSalesReport,
   getDashboardSummary,
   listNotifications,

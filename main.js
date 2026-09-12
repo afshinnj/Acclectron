@@ -14,6 +14,7 @@ const {
   createCategory,
   createProduct,
   createSale,
+  mergeDailySales,
   getDashboardSummary,
   listNotifications,
   getSalesReport,
@@ -40,6 +41,8 @@ const {
   getAppSettings,
   saveAppSettings,
   getNextInvoiceNumber,
+  getNextProductCode,
+  checkProductDuplicate,
   listSales,
   listPurchases,
   getPurchasePriceHistory,
@@ -197,6 +200,8 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('products:search', (_event, query = '') => searchProducts(query));
   ipcMain.handle('products:list', (_event, payload = {}) => listProducts(payload.query, payload.categoryId));
+  ipcMain.handle('products:next-code', (_event, categoryId, excludeId = null) => getNextProductCode(categoryId, excludeId));
+  ipcMain.handle('products:check-duplicate', (_event, payload = {}, excludeId = null) => checkProductDuplicate(payload, excludeId));
   ipcMain.handle('products:create', (_event, payload) => createProduct(payload));
   ipcMain.handle('products:update', (_event, id, payload) => updateProduct(id, payload));
   ipcMain.handle('products:quick-update', (_event, id, payload) => updateProductQuick(id, payload));
@@ -269,6 +274,7 @@ function registerIpcHandlers() {
   ipcMain.handle('settings:backup-now', async (_event, destination) => {
     return backupDatabase(destination);
   });
+  ipcMain.handle('settings:official-start', () => startOfficialUse());
   ipcMain.handle('settings:restore', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: 'بازیابی پشتیبان Acclectron',
@@ -330,7 +336,7 @@ function registerIpcHandlers() {
     if (selection.canceled || !selection.filePath) return { canceled: true };
     const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const rows = String(kind) === 'profit-loss'
-      ? [['تاریخ', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'هزینه', 'سود خالص'], ...(report.byDate || []).map((r) => [r.date, r.netSales, r.costTotal, r.grossProfit, r.expenses, r.netProfit])]
+      ? [['تاریخ', 'فروش خالص', 'بهای تمام‌شده', 'سود ناخالص', 'درآمد متفرقه', 'هزینه', 'سود خالص'], ...(report.byDate || []).map((r) => [r.date, r.netSales, r.costTotal, r.grossProfit, r.otherIncome, r.expenses, r.netProfit])]
       : [['تاریخ', 'فروش خالص', 'هزینه', 'سود', 'تعداد فاکتور'], ...(report.byDate || []).map((r) => [r.date, r.netSales, r.costTotal, r.profitTotal, r.invoiceCount])];
     fs.writeFileSync(selection.filePath, '\uFEFF' + rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
     return { canceled: false, filePath: selection.filePath, count: rows.length - 1 };
@@ -355,6 +361,7 @@ function registerIpcHandlers() {
     return { canceled: false, filePath: selection.filePath };
   });
   ipcMain.handle('sales:create', (_event, payload) => createSale(payload));
+  ipcMain.handle('sales:merge-daily', (_event, payload) => mergeDailySales(payload));
   ipcMain.handle('purchases:create', (_event, payload) => createPurchase(payload));
   ipcMain.handle('sales:list', (_event, payload) => listSales(payload));
   ipcMain.handle('purchases:list', (_event, payload) => listPurchases(payload));
@@ -416,6 +423,23 @@ function backupDatabase(destination) {
   const file = path.join(targetDir, `accletron-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
   fs.copyFileSync(source, file);
   return { path: file };
+}
+
+function startOfficialUse() {
+  const userDataPath = app.getPath('userData');
+  const source = path.join(userDataPath, 'accletron.db');
+  const settings = getAppSettings();
+  const backup = backupDatabase(settings.backup?.path);
+
+  closeDatabase();
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    const file = `${source}${suffix}`;
+    if (fs.existsSync(file)) fs.rmSync(file);
+  }
+  getDatabase(userDataPath);
+  saveAppSettings(settings);
+
+  return { backupPath: backup.path };
 }
 
 function runAutoBackupIfDue() {

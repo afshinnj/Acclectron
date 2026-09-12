@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('api', {
   products: {
     search: (query) => ipcRenderer.invoke('products:search', query),
     list: (payload) => ipcRenderer.invoke('products:list', payload),
+    nextCode: (categoryId, excludeId) => ipcRenderer.invoke('products:next-code', categoryId, excludeId),
+    checkDuplicate: (payload, excludeId) => ipcRenderer.invoke('products:check-duplicate', payload, excludeId),
     create: (payload) => ipcRenderer.invoke('products:create', payload),
     update: (id, payload) => ipcRenderer.invoke('products:update', id, payload),
     quickUpdate: (id, payload) => ipcRenderer.invoke('products:quick-update', id, payload),
@@ -79,6 +81,7 @@ contextBridge.exposeInMainWorld('api', {
     chooseLogo: () => ipcRenderer.invoke('settings:choose-logo'),
     chooseBackupPath: () => ipcRenderer.invoke('settings:choose-backup-path'),
     backupNow: (destination) => ipcRenderer.invoke('settings:backup-now', destination),
+    officialStart: () => ipcRenderer.invoke('settings:official-start'),
     restore: () => ipcRenderer.invoke('settings:restore')
   },
   print: {
@@ -87,7 +90,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   sales: {
     create: (payload) => ipcRenderer.invoke('sales:create', payload),
-    list: (payload) => ipcRenderer.invoke('sales:list', payload)
+    list: (payload) => ipcRenderer.invoke('sales:list', payload),
+    mergeDaily: (payload) => ipcRenderer.invoke('sales:merge-daily', payload)
   },
   purchases: {
     create: (payload) => ipcRenderer.invoke('purchases:create', payload),

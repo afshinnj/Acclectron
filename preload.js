@@ -45,6 +45,12 @@ contextBridge.exposeInMainWorld('api', {
     logout: () => ipcRenderer.invoke('auth:logout'),
     current: () => ipcRenderer.invoke('auth:current'),
     changePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth:change-password', currentPassword, newPassword)
+    ,windowsHello: {
+      registrationOptions: () => ipcRenderer.invoke('auth:webauthn:registration-options'),
+      registrationVerify: (response) => ipcRenderer.invoke('auth:webauthn:registration-verify', response),
+      authenticationOptions: (username) => ipcRenderer.invoke('auth:webauthn:authentication-options', username),
+      authenticationVerify: (username, response) => ipcRenderer.invoke('auth:webauthn:authentication-verify', username, response)
+    }
   },
   users: {
     create: (payload) => ipcRenderer.invoke('users:create', payload),

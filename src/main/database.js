@@ -4,10 +4,18 @@ const { DatabaseSync } = require('node:sqlite');
 const { calculateSaleTotals } = require('./domain/sales');
 const { buildSalesForecast } = require('./domain/forecast');
 const { normalizePersianText } = require('./importer');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse
+} = require('@simplewebauthn/server');
 const crypto = require('node:crypto');
-
 let database;
 let currentUserId = null;
+const webAuthnChallenges = new Map();
+const webAuthnRpId = 'accletron.local';
+const webAuthnOrigin = 'https://accletron.local';
 const ROLE_PERMISSIONS = {
   admin: ['*'],
   manager: ['sales', 'purchases', 'returns', 'cash', 'inventory', 'reports', 'settings', 'users'],
@@ -136,6 +144,16 @@ function getDatabase(userDataPath) {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS webauthn_credentials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      credential_id TEXT NOT NULL UNIQUE,
+      public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT
     );
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -544,6 +562,65 @@ function getCurrentUser() {
   return { ...row, isActive: Boolean(row.isActive) };
 }
 
+function beginWindowsHelloRegistration() {
+  const user = getCurrentUser();
+  if (!user) throw new Error('برای ثبت Windows Hello ابتدا وارد حساب شوید.');
+  const existing = requireDatabase().prepare('SELECT credential_id AS credentialId FROM webauthn_credentials WHERE user_id = ?').all(user.id);
+  const options = generateRegistrationOptions({
+    rpName: 'Acclectron', rpID: webAuthnRpId, userName: user.username,
+    userDisplayName: user.displayName || user.username, userID: String(user.id),
+    attestationType: 'none',
+    excludeCredentials: existing.map((row) => ({ id: row.credentialId, type: 'public-key' })),
+    authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' }
+  });
+  webAuthnChallenges.set(`register:${user.id}`, { challenge: options.challenge, expiresAt: Date.now() + 120000 });
+  return options;
+}
+
+function finishWindowsHelloRegistration(response) {
+  const user = getCurrentUser();
+  if (!user) throw new Error('نشست کاربر معتبر نیست.');
+  const key = `register:${user.id}`;
+  const pending = webAuthnChallenges.get(key);
+  webAuthnChallenges.delete(key);
+  if (!pending || pending.expiresAt < Date.now()) throw new Error('درخواست Windows Hello منقضی شده است.');
+  const verification = verifyRegistrationResponse({ response, expectedChallenge: pending.challenge, expectedOrigin: webAuthnOrigin, expectedRPID: webAuthnRpId, requireUserVerification: true });
+  if (!verification.verified || !verification.registrationInfo) throw new Error('ثبت Windows Hello تأیید نشد.');
+  const info = verification.registrationInfo;
+  requireDatabase().prepare(`INSERT INTO webauthn_credentials (user_id, credential_id, public_key, counter, transports) VALUES (?, ?, ?, ?, ?)`)
+    .run(user.id, Buffer.from(info.credential.id).toString('base64url'), Buffer.from(info.credential.publicKey).toString('base64'), Number(info.credential.counter || 0), JSON.stringify(info.credential.transports || []));
+  auditLog('auth.webauthn.register', 'user', user.id);
+  return { verified: true };
+}
+
+function beginWindowsHelloAuthentication(username = '') {
+  const user = requireDatabase().prepare('SELECT id FROM users WHERE username = ? AND is_active = 1').get(String(username || '').trim());
+  if (!user) throw new Error('کاربر فعال پیدا نشد.');
+  const credentials = requireDatabase().prepare('SELECT credential_id AS credentialId FROM webauthn_credentials WHERE user_id = ?').all(user.id);
+  if (!credentials.length) throw new Error('برای این کاربر Windows Hello ثبت نشده است.');
+  const options = generateAuthenticationOptions({ rpID: webAuthnRpId, userVerification: 'required', allowCredentials: credentials.map((row) => ({ id: row.credentialId, type: 'public-key' })) });
+  webAuthnChallenges.set(`authenticate:${user.id}`, { challenge: options.challenge, expiresAt: Date.now() + 120000 });
+  return options;
+}
+
+function finishWindowsHelloAuthentication(username, response) {
+  const db = requireDatabase();
+  const user = db.prepare('SELECT id FROM users WHERE username = ? AND is_active = 1').get(String(username || '').trim());
+  if (!user) throw new Error('اطلاعات Windows Hello معتبر نیست.');
+  const key = `authenticate:${user.id}`;
+  const pending = webAuthnChallenges.get(key);
+  webAuthnChallenges.delete(key);
+  if (!pending || pending.expiresAt < Date.now()) throw new Error('درخواست Windows Hello منقضی شده است.');
+  const stored = db.prepare('SELECT * FROM webauthn_credentials WHERE user_id = ? AND credential_id = ?').get(user.id, String(response?.id || ''));
+  if (!stored) throw new Error('credential Windows Hello پیدا نشد.');
+  const verification = verifyAuthenticationResponse({ response, expectedChallenge: pending.challenge, expectedOrigin: webAuthnOrigin, expectedRPID: webAuthnRpId, requireUserVerification: true, credential: { id: stored.credential_id, publicKey: Buffer.from(stored.public_key, 'base64'), counter: Number(stored.counter || 0), transports: JSON.parse(stored.transports || '[]') } });
+  if (!verification.verified) throw new Error('ورود با Windows Hello تأیید نشد.');
+  db.prepare('UPDATE webauthn_credentials SET counter = ?, last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(Number(verification.authenticationInfo.newCounter || stored.counter), stored.id);
+  currentUserId = Number(user.id);
+  auditLog('auth.webauthn.login', 'user', user.id);
+  return getCurrentUser();
+}
+
 function requirePermission(permission) {
   const user = getCurrentUser();
   if (!user) return true;
@@ -927,7 +1004,8 @@ function getAppSettings() {
       calendar: 'jalali',
       fontScale: Number(settings.fontScale || 100),
       notifications: settings.notifications !== false,
-      shortcuts: settings.shortcuts !== false
+      shortcuts: settings.shortcuts !== false,
+      startup: settings.startup === true
     }
     ,backup: {
       auto: settings.backupAuto === true,
@@ -1032,7 +1110,8 @@ function saveAppSettings(payload = {}) {
     calendar: ['gregorian', 'jalali'].includes(String(appearance.calendar)) ? String(appearance.calendar) : 'gregorian',
     fontScale: Math.max(80, Math.min(130, Number(appearance.fontScale || 100))),
     notifications: appearance.notifications !== false,
-    shortcuts: appearance.shortcuts !== false
+    shortcuts: appearance.shortcuts !== false,
+    startup: appearance.startup === true
   });
   const backup = payload.backup || {};
   Object.assign(values, {
@@ -3415,6 +3494,10 @@ module.exports = {
   auditLog,
   setCurrentUser,
   getCurrentUser,
+  beginWindowsHelloRegistration,
+  finishWindowsHelloRegistration,
+  beginWindowsHelloAuthentication,
+  finishWindowsHelloAuthentication,
   createUser,
   listUsers,
   setUserActive,

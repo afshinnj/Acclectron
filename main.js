@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } = require('electron');
 // Some Windows GPU drivers terminate Electron immediately with
 // "GPU state invalid..." before the login window is usable.
 app.disableHardwareAcceleration();
@@ -78,6 +78,10 @@ const {
   getCurrentUser,
   listAuditLogs,
   setCurrentUser,
+  beginWindowsHelloRegistration,
+  finishWindowsHelloRegistration,
+  beginWindowsHelloAuthentication,
+  finishWindowsHelloAuthentication,
   listChecks,
   updateCheckStatus,
   createInstallmentPlan,
@@ -87,13 +91,19 @@ const {
 } = require('./src/main/database');
 
 let mainWindow;
+let tray;
+let isQuitting = false;
 let autoBackupTimer;
 const pendingImports = new Map();
 const appIconPath = path.join(__dirname, 'assets', 'icon.png');
 
 function registerIpcHandlers() {
   ipcMain.handle('settings:get', () => getAppSettings());
-  ipcMain.handle('settings:save', (_event, payload) => saveAppSettings(payload));
+  ipcMain.handle('settings:save', (_event, payload) => {
+    const settings = saveAppSettings(payload);
+    applyStartupSetting(settings.appearance?.startup);
+    return settings;
+  });
   ipcMain.handle('settings:printers', async () => {
     if (!mainWindow?.webContents?.getPrintersAsync) return [];
     const printers = await mainWindow.webContents.getPrintersAsync();
@@ -404,6 +414,10 @@ function registerIpcHandlers() {
   ipcMain.handle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
   ipcMain.handle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
   ipcMain.handle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
+  ipcMain.handle('auth:webauthn:registration-options', () => beginWindowsHelloRegistration());
+  ipcMain.handle('auth:webauthn:registration-verify', (_event, response) => finishWindowsHelloRegistration(response));
+  ipcMain.handle('auth:webauthn:authentication-options', (_event, username) => beginWindowsHelloAuthentication(username));
+  ipcMain.handle('auth:webauthn:authentication-verify', (_event, username, response) => finishWindowsHelloAuthentication(username, response));
   ipcMain.handle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
   ipcMain.handle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
   ipcMain.handle('daily-close:details', (_event, id) => getDailyClosure(id));
@@ -486,6 +500,12 @@ const createWindow = () => {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault();
   });
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow.hide();
+    mainWindow.setSkipTaskbar(true);
+  });
   mainWindow.loadFile('index.html');
   mainWindow.once('ready-to-show', () => {
     mainWindow.maximize();
@@ -493,10 +513,41 @@ const createWindow = () => {
   });
 };
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setSkipTaskbar(false);
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createSystemTray() {
+  if (tray) return;
+  const source = nativeImage.createFromPath(appIconPath);
+  tray = new Tray(source.isEmpty() ? nativeImage.createEmpty() : source.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Acclectron');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'نمایش Acclectron', click: showMainWindow },
+    { type: 'separator' },
+    { label: 'خروج کامل', click: () => { isQuitting = true; app.quit(); } }
+  ]));
+  tray.on('click', showMainWindow);
+}
+
+function applyStartupSetting(enabled) {
+  if (process.platform !== 'win32' || typeof app.setLoginItemSettings !== 'function') return;
+  app.setLoginItemSettings({
+    openAtLogin: Boolean(enabled),
+    path: process.execPath,
+    args: app.isPackaged ? [] : [app.getAppPath()]
+  });
+}
+
 app.whenReady().then(() => {
   getDatabase(app.getPath('userData'));
   registerIpcHandlers();
+  applyStartupSetting(getAppSettings().appearance?.startup);
   createWindow();
+  createSystemTray();
   runAutoBackupIfDue();
   autoBackupTimer = setInterval(runAutoBackupIfDue, 60 * 1000);
 
@@ -506,9 +557,12 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   if (autoBackupTimer) clearInterval(autoBackupTimer);
+  tray?.destroy();
+  tray = null;
   closeDatabase();
 });
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (isQuitting && process.platform !== 'darwin') app.quit();
 });

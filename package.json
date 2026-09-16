@@ -19,7 +19,7 @@
     "start": "electron .",
     "dev": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check src/main/database.js && node --check src/main/domain/sales.js",
-    "test": "node --test --test-concurrency=1 test/database.test.js test/sales.test.js",
+    "test": "node --test --test-concurrency=1 test/database.test.js test/sales.test.js test/sales-reports.test.js",
     "build:portable": "powershell -ExecutionPolicy Bypass -File ./build-portable.ps1",
     "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/generate-win-icon.ps1 && electron-builder --win nsis",
     "release": "npm run check && npm test && npm run build:portable"

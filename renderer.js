@@ -36,6 +36,12 @@ document.addEventListener('click', async (event) => {
 document.addEventListener('submit', (event) => {
   if (event.target?.id === 'loginForm') event.preventDefault();
 }, true);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target?.closest?.('#loginForm')) {
+    event.preventDefault();
+    $('#loginSubmit')?.click();
+  }
+}, true);
 let uiCurrency = { code: 'IRR', name: '\u0631\u06cc\u0627\u0644', symbol: '\u0631\u06cc\u0627\u0644', position: 'suffix', decimals: 0, separator: true, inputUnit: 'rial' };
 let defaultSettlementMethod = 'cash';
 let uiTheme = 'dark';
@@ -223,9 +229,39 @@ function initializeDashboardMarkup() {
     <div class="dashboard-alert-strip"><div><strong>هشدارهای فوری</strong><small id="dashboardAlertHint">در حال بررسی...</small></div><button id="dashboardAlertsButton" class="secondary">مشاهده اعلان‌ها</button></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small>۶ روز کاری اخیر</small></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش بر اساس دسته‌بندی</h3><small>ماه جاری</small></div><div id="dashboardCategoryChart" class="dashboard-bars"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>وضعیت نقدینگی ماه</h3><small>دریافت و هزینه</small></div><div id="dashboardCashChart" class="dashboard-bars"></div></section></div>
-    <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>`;
+    <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>
+    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود</span><strong id="dashboardReportProfit">۰</strong></div><div><span>تعداد فاکتور</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دوره</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div></section>`;
   $('#refreshDashboard').onclick = () => window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true));
   $('#dashboardAlertsButton').onclick = () => $('#notificationButton')?.click();
+  $('#dashboardReportPeriod').onchange = loadDashboardSalesPanel;
+  $('#dashboardReportOpen').onclick = () => setManagedPage('reports');
+  loadDashboardSalesPanel();
+}
+async function loadDashboardSalesPanel() {
+  const chart = $('#dashboardReportChart');
+  if (!chart) return;
+  try {
+    const period = $('#dashboardReportPeriod')?.value || 'month';
+    const data = await window.api.reports.sales({ period });
+    const rows = data.byPeriod || [];
+    const totalSales = rows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
+    const totalProfit = rows.reduce((sum, row) => sum + Number(row.profitTotal || 0), 0);
+    const latest = rows.length ? Number(rows[rows.length - 1].netSales || 0) : 0;
+    const previous = rows.length > 1 ? Number(rows[rows.length - 2].netSales || 0) : 0;
+    const growth = previous ? ((latest - previous) / previous) * 100 : null;
+    const labels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
+    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${rows.length} دوره`;
+    $('#dashboardReportSales').textContent = money(totalSales);
+    $('#dashboardReportProfit').textContent = money(totalProfit);
+    $('#dashboardReportProfit').classList.toggle('negative', totalProfit < 0);
+    $('#dashboardReportInvoices').textContent = new Intl.NumberFormat('fa-IR').format(Number(data.summary?.invoiceCount || 0));
+    $('#dashboardReportGrowth').textContent = growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`;
+    $('#dashboardReportGrowth').classList.toggle('negative', growth !== null && growth < 0);
+    const chartRows = rows.map((row) => ({ ...row, date: row.period }));
+    reportSvgLine(chart, chartRows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
+  } catch (error) {
+    chart.innerHTML = '<div class="empty-state compact">داده‌ای برای داشبورد تحلیلی وجود ندارد.</div>';
+  }
 }
 function renderDashboard(summary) {
   initializeDashboardMarkup();
@@ -285,6 +321,7 @@ function renderDashboard(summary) {
   const dashboardTopProducts = [...(summary.topProducts || [])].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
   $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
   document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
+  loadDashboardSalesPanel();
 }
 
 function renderResults() {
@@ -658,8 +695,9 @@ function openManagementModal(kind, record = null, options = {}) {
     $('#productModalTitle').textContent = record ? 'ویرایش کالا' : 'ثبت کالای جدید'; $('#productId').value = record?.id || '';
     $('#productForm').dataset.originalCategoryId = record?.categoryId || '';
     [['productName', record?.name], ['productCode', record?.code], ['productBarcode', record?.barcode], ['productPurchasePrice', record ? formatPriceInput(record.purchasePrice) : formatPriceInput(0)], ['productWholesalePrice', record ? formatPriceInput(record.wholesalePrice) : formatPriceInput(0)], ['productRetailPrice', record ? formatPriceInput(record.salePrice) : formatPriceInput(0)], ['productStock', record?.stock ?? 0], ['productMinimumStock', record?.minimumStock ?? 0], ['productDescription', record?.description || '']].forEach(([id, value]) => { $(`#${id}`).value = value ?? ''; });
-    // Preserve saved/manual prices while editing; derive prices only for new products.
-    productSellingPriceAuto = record ? { wholesale: false, retail: false } : { wholesale: true, retail: true };
+    // Preserve saved prices when opening edit, but allow a new purchase price
+    // to recalculate wholesale and retail prices just like the create form.
+    productSellingPriceAuto = { wholesale: true, retail: true };
     setupProductPriceFields();
     if (!record) updateProductSellingPrices();
     $('#productCategory').value = record?.categoryId || ''; $('#productUnit').value = record?.unitId || '';
@@ -2698,6 +2736,7 @@ function initializeReportsPage() {
         <label>از تاریخ<input id="reportFrom" class="report-date" type="date"></label>
         <label>تا تاریخ<input id="reportTo" class="report-date" type="date"></label>
         <label>نوع فروش<select id="reportSource"><option value="">همه فروش‌ها</option><option value="daily">فروش روزانه</option><option value="invoice">فاکتور فروش</option></select></label>
+        <label>دورهٔ تجمیع<select id="reportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month">ماهانه</option><option value="year">سالانه</option></select></label>
         <button id="reportApply" class="primary" type="button">اعمال فیلتر</button>
       </div>
       <div id="reportError" class="form-error hidden"></div>
@@ -2708,8 +2747,9 @@ function initializeReportsPage() {
         <div class="metric-card"><span>تعداد کالا</span><strong id="reportItems">۰</strong><small id="reportSources">روزانه: ۰ | فاکتور: ۰</small></div>
       </div>
       <div id="reportAdjustments" class="report-adjustments"></div>
+      <div id="reportComparison" class="report-adjustments report-comparison"></div>
       <div class="report-grid">
-        <section class="panel report-chart-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small>بر اساس روز</small></div><div id="reportTrendChart" class="report-chart"></div></section>
+        <section class="panel report-chart-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small id="reportTrendNote">بر اساس روز</small></div><div id="reportTrendChart" class="report-chart"></div></section>
         <section class="panel report-chart-panel"><div class="panel-heading"><h3>پیش‌بینی فروش</h3><small id="reportForecastNote">میانگین متحرک ۷ روزه</small></div><div id="reportForecastChart" class="report-chart"></div></section>
       </div>
       <div class="report-grid">
@@ -2728,7 +2768,7 @@ function initializeReportsPage() {
       const result = await window.api.reports.exportCsv('sales', {
         from: reportDateValue('reportFrom'),
         to: reportDateValue('reportTo'),
-        source: $('#reportSource')?.value || ''
+        source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day'
       });
       if (!result?.canceled) showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
     } catch (e) { showToast(readableError(e, 'خروجی Excel ناموفق بود.'), true); }
@@ -2813,7 +2853,7 @@ async function loadSalesReport() {
   if (!error) return;
   error.classList.add('hidden');
   try {
-    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: $('#reportSource')?.value || '' });
+    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day' });
     const s = data.summary || {};
     $('#reportNetSales').textContent = money(s.netSales);
     $('#reportInvoiceCount').textContent = `${new Intl.NumberFormat('fa-IR').format(Number(s.invoiceCount || 0))} فاکتور`;
@@ -2825,8 +2865,19 @@ async function loadSalesReport() {
     $('#reportItems').textContent = new Intl.NumberFormat('fa-IR').format(Number(s.itemCount || 0));
     $('#reportSources').textContent = `روزانه: ${Number(s.dailyCount || 0)} | فاکتور: ${Number(s.formalCount || 0)}`;
     $('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${money(s.subtotal)}</span><span>تخفیف: ${money(s.discount)}</span><span>مالیات: ${money(s.tax)} (در سود لحاظ نشده)</span>`;
+    const periodLabels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
+    const period = data.period || $('#reportPeriod')?.value || 'day';
+    const periodRows = data.byPeriod || [];
+    const periodTotal = periodRows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
+    const previousPeriodTotal = periodRows.length > 1 ? Number(periodRows[periodRows.length - 2].netSales || 0) : 0;
+    const latestPeriodTotal = periodRows.length ? Number(periodRows[periodRows.length - 1].netSales || 0) : 0;
+    const growth = previousPeriodTotal ? ((latestPeriodTotal - previousPeriodTotal) / previousPeriodTotal) * 100 : null;
+    const average = periodRows.length ? periodTotal / periodRows.length : 0;
+    $('#reportComparison').innerHTML = `<span>تجمیع: <b>${periodLabels[period]}</b></span><span>میانگین هر دوره: ${money(average)}</span><span>رشد آخرین دوره: <b class="${growth !== null && growth < 0 ? 'negative' : ''}">${growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`}</b></span>`;
+    $('#reportTrendNote').textContent = `تجمیع ${periodLabels[period]}`;
     const daily = reportFillDates(data.byDate || []);
-    reportSvgLine($('#reportTrendChart'), daily, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
+    const trendRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
+    reportSvgLine($('#reportTrendChart'), trendRows, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
     const recent = daily.slice(-7);
     const avg = recent.length ? recent.reduce((sum, row) => sum + Number(row.netSales || 0), 0) / recent.length : 0;
     const forecast = Array.from({ length: 7 }, (_, i) => ({ date: `پیش‌بینی ${i + 1}`, netSales: avg, profitTotal: avg * (Number(s.profitTotal || 0) / Math.max(1, Number(s.netSales || 0))) }));
@@ -2839,7 +2890,8 @@ async function loadSalesReport() {
       secondaryValueKey: 'quantity',
       secondaryLabel: 'عدد فروش'
     });
-    $('#reportDailyTable').innerHTML = daily.length ? `<table><thead><tr><th>تاریخ</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th></tr></thead><tbody>${daily.slice().reverse().map((row) => `<tr><td>${esc(reportIsoToJalali(row.date))}</td><td>${money(row.netSales)}</td><td>${money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
+    const tableRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
+    $('#reportDailyTable').innerHTML = tableRows.length ? `<table><thead><tr><th>${periodLabels[period]}</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th><th>میانگین فاکتور</th></tr></thead><tbody>${tableRows.slice().reverse().map((row) => `<tr><td>${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(row.date)) ? reportIsoToJalali(row.date) : String(row.date))}</td><td>${money(row.netSales)}</td><td>${money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td><td>${money(Number(row.invoiceCount || 0) ? Number(row.netSales || 0) / Number(row.invoiceCount) : 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
     $('#reportCustomerTable').innerHTML = (data.byCustomer || []).length ? `<table><thead><tr><th>مشتری</th><th>فروش</th><th>سود</th></tr></thead><tbody>${data.byCustomer.map((row) => `<tr><td>${esc(row.customerName)}</td><td>${money(row.total)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
   } catch (err) {
     error.textContent = err.message || 'دریافت گزارش ناموفق بود.';

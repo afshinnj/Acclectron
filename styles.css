@@ -1013,3 +1013,9 @@ select option{background:#111a2b;color:#e5edf7}
 .dashboard-forecast-box{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
 .dashboard-forecast-box .panel-heading{margin-bottom:8px}
 .dashboard-forecast-box .dashboard-report-controls select{min-width:92px}
+
+/* Dashboard analytical charts follow the active theme and use readable Persian labels. */
+.dashboard-report-chart svg text{fill:var(--chart-label,#e5edf7);font-size:10px;font-family:inherit}
+.dashboard-report-chart .chart-grid{stroke:var(--chart-grid,#33445d)}
+.dashboard-report-panel .chart-legend{color:var(--chart-label,#cbd5e1)}
+:root[data-theme="light"]{--chart-label:#0f172a;--chart-grid:#cbd5e1}

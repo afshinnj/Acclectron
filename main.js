@@ -482,6 +482,10 @@ const createWindow = () => {
     }
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) event.preventDefault();
+  });
   mainWindow.loadFile('index.html');
   mainWindow.once('ready-to-show', () => {
     mainWindow.maximize();

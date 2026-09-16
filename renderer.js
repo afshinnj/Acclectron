@@ -230,12 +230,30 @@ function initializeDashboardMarkup() {
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small>۶ روز کاری اخیر</small></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش بر اساس دسته‌بندی</h3><small>ماه جاری</small></div><div id="dashboardCategoryChart" class="dashboard-bars"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>وضعیت نقدینگی ماه</h3><small>دریافت و هزینه</small></div><div id="dashboardCashChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>
-    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود</span><strong id="dashboardReportProfit">۰</strong></div><div><span>تعداد فاکتور</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دوره</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div></section>`;
+    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود</span><strong id="dashboardReportProfit">۰</strong></div><div><span>تعداد فاکتور</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دوره</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div><div class="dashboard-forecast-box"><div class="panel-heading"><div><h3>پیش‌بینی فروش آینده</h3><small id="dashboardForecastNote">بر اساس روند ماه‌های اخیر</small></div><div class="dashboard-report-controls"><select id="dashboardForecastPeriod"><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><select id="dashboardForecastHorizon"><option value="3">۳ دوره</option><option value="6">۶ دوره</option><option value="12">۱۲ دوره</option></select></div></div><div id="dashboardForecastChart" class="dashboard-report-chart"></div></div></section>`;
   $('#refreshDashboard').onclick = () => window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true));
   $('#dashboardAlertsButton').onclick = () => $('#notificationButton')?.click();
   $('#dashboardReportPeriod').onchange = loadDashboardSalesPanel;
+  $('#dashboardForecastPeriod').onchange = loadDashboardForecast;
+  $('#dashboardForecastHorizon').onchange = loadDashboardForecast;
   $('#dashboardReportOpen').onclick = () => setManagedPage('reports');
   loadDashboardSalesPanel();
+  loadDashboardForecast();
+}
+async function loadDashboardForecast() {
+  const chart = $('#dashboardForecastChart');
+  if (!chart) return;
+  try {
+    const period = $('#dashboardForecastPeriod')?.value || 'month';
+    const horizon = Number($('#dashboardForecastHorizon')?.value || 3);
+    const data = await window.api.reports.forecast({ period, horizon });
+    const history = (data.history || []).map((row) => ({ ...row, date: row.period, forecast: 0 }));
+    const predictions = (data.predictions || []).map((row) => ({ ...row, date: row.period, forecast: row.netSales }));
+    reportSvgLine(chart, [...history, ...predictions], [{ key: 'netSales', label: 'فروش واقعی/پیش‌بینی', color: '#fbbf24' }, { key: 'forecast', label: 'پیش‌بینی', color: '#c084fc' }]);
+    $('#dashboardForecastNote').textContent = `${data.note} · اطمینان: ${data.confidence}`;
+  } catch {
+    chart.innerHTML = '<div class="empty-state compact">پیش‌بینی برای این بازه در دسترس نیست.</div>';
+  }
 }
 async function loadDashboardSalesPanel() {
   const chart = $('#dashboardReportChart');
@@ -322,6 +340,7 @@ function renderDashboard(summary) {
   $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
   document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
   loadDashboardSalesPanel();
+  loadDashboardForecast();
 }
 
 function renderResults() {

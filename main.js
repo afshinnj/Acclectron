@@ -18,6 +18,7 @@ const {
   getDashboardSummary,
   listNotifications,
   getSalesReport,
+  getSalesForecast,
   getDatabase,
   listCategories,
   listProducts,
@@ -326,6 +327,7 @@ function registerIpcHandlers() {
     return result;
   });
   ipcMain.handle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
+  ipcMain.handle('reports:forecast', (_event, payload = {}) => getSalesForecast(payload));
   ipcMain.handle('reports:export-csv', async (_event, kind, payload = {}) => {
     const report = String(kind) === 'profit-loss' ? getProfitLossReport(payload) : getSalesReport(payload);
     const selection = await dialog.showSaveDialog(mainWindow, {

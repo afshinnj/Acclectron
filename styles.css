@@ -1009,3 +1009,7 @@ select option{background:#111a2b;color:#e5edf7}
 .report-comparison b { color: var(--accent, #6ee7b7); }
 
 .dashboard-report-panel{margin:0 0 16px}.dashboard-report-controls{display:flex;align-items:center;gap:10px}.dashboard-report-controls select{min-width:110px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:#101b2d;color:#dce7f6;font:inherit}.dashboard-report-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 8px}.dashboard-report-kpis>div{padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#101b2d}.dashboard-report-kpis span{display:block;color:#91a2ba;font-size:10px}.dashboard-report-kpis strong{display:block;margin-top:7px;color:#e8f0fa;font-size:15px}.dashboard-report-kpis strong.negative{color:#fda4af}.dashboard-report-chart{min-height:230px}@media (max-width:760px){.dashboard-report-kpis{grid-template-columns:repeat(2,1fr)}.dashboard-report-controls{flex-wrap:wrap}}
+
+.dashboard-forecast-box{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.dashboard-forecast-box .panel-heading{margin-bottom:8px}
+.dashboard-forecast-box .dashboard-report-controls select{min-width:92px}

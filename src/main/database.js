@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { calculateSaleTotals } = require('./domain/sales');
+const { buildSalesForecast } = require('./domain/forecast');
 const { normalizePersianText } = require('./importer');
 const crypto = require('node:crypto');
 
@@ -2010,6 +2011,11 @@ function getSalesReport(payload = {}) {
     byCustomer: castRows(byCustomer)
   };
 }
+function getSalesForecast(payload = {}) {
+  const period = String(payload.period || '') === 'year' ? 'year' : 'month';
+  const report = getSalesReport({ period, source: payload.source });
+  return buildSalesForecast(report.byPeriod, { period, horizon: payload.horizon });
+}
 
 function normalizeInvoicePayments(payments, total, fallbackPaidAmount = 0) {
   const source = Array.isArray(payments) && payments.length
@@ -3367,6 +3373,7 @@ module.exports = {
   createSale,
   mergeDailySales,
   getSalesReport,
+  getSalesForecast,
   getDashboardSummary,
   listNotifications,
   getDatabase,

@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   reports: {
     sales: (payload) => ipcRenderer.invoke('reports:sales', payload),
+    forecast: (payload) => ipcRenderer.invoke('reports:forecast', payload),
     exportCsv: (kind, payload) => ipcRenderer.invoke('reports:export-csv', kind, payload),
     exportPdf: (payload) => ipcRenderer.invoke('reports:export-pdf', payload)
   },

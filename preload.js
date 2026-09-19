@@ -50,6 +50,12 @@ contextBridge.exposeInMainWorld('api', {
       registrationVerify: (response) => ipcRenderer.invoke('auth:webauthn:registration-verify', response),
       authenticationOptions: (username) => ipcRenderer.invoke('auth:webauthn:authentication-options', username),
       authenticationVerify: (username, response) => ipcRenderer.invoke('auth:webauthn:authentication-verify', username, response)
+      ,quickPin: {
+        set: (pin, currentPassword) => ipcRenderer.invoke('auth:quick-pin:set', pin, currentPassword),
+        clear: (currentPassword) => ipcRenderer.invoke('auth:quick-pin:clear', currentPassword),
+        status: () => ipcRenderer.invoke('auth:quick-pin:status'),
+        unlock: (pin) => ipcRenderer.invoke('auth:quick-pin:unlock', pin)
+      }
     }
   },
   users: {

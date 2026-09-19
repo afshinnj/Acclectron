@@ -82,6 +82,10 @@ const {
   finishWindowsHelloRegistration,
   beginWindowsHelloAuthentication,
   finishWindowsHelloAuthentication,
+  setQuickPin,
+  clearQuickPin,
+  getQuickPinStatus,
+  unlockWithQuickPin,
   listChecks,
   updateCheckStatus,
   createInstallmentPlan,
@@ -418,6 +422,10 @@ function registerIpcHandlers() {
   ipcMain.handle('auth:webauthn:registration-verify', (_event, response) => finishWindowsHelloRegistration(response));
   ipcMain.handle('auth:webauthn:authentication-options', (_event, username) => beginWindowsHelloAuthentication(username));
   ipcMain.handle('auth:webauthn:authentication-verify', (_event, username, response) => finishWindowsHelloAuthentication(username, response));
+  ipcMain.handle('auth:quick-pin:set', (_event, pin, currentPassword) => setQuickPin(pin, currentPassword));
+  ipcMain.handle('auth:quick-pin:clear', (_event, currentPassword) => clearQuickPin(currentPassword));
+  ipcMain.handle('auth:quick-pin:status', () => getQuickPinStatus());
+  ipcMain.handle('auth:quick-pin:unlock', (_event, pin) => unlockWithQuickPin(pin));
   ipcMain.handle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
   ipcMain.handle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
   ipcMain.handle('daily-close:details', (_event, id) => getDailyClosure(id));

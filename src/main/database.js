@@ -155,6 +155,14 @@ function getDatabase(userDataPath) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_used_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS quick_pin_credentials (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      pin_hash TEXT NOT NULL,
+      pin_salt TEXT NOT NULL,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT,
@@ -560,6 +568,74 @@ function getCurrentUser() {
     return null;
   }
   return { ...row, isActive: Boolean(row.isActive) };
+}
+
+function validateQuickPin(pin) {
+  const value = String(pin || '').trim();
+  if (!/^\d{4,6}$/.test(value)) throw new Error('PIN باید ۴ تا ۶ رقم باشد.');
+  return value;
+}
+
+function setQuickPin(pin, currentPassword = '') {
+  const user = getCurrentUser();
+  if (!user) throw new Error('برای تنظیم PIN ابتدا وارد حساب شوید.');
+  const db = requireDatabase();
+  const account = db.prepare('SELECT password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE id = ?').get(user.id);
+  if (getAppSettings().security?.passwordlessLogin !== true) {
+    const { passwordHash } = hashPassword(currentPassword, account.passwordSalt);
+    if (!crypto.timingSafeEqual(Buffer.from(passwordHash, 'hex'), Buffer.from(account.passwordHash, 'hex'))) throw new Error('رمز عبور فعلی نادرست است.');
+  }
+  const value = validateQuickPin(pin);
+  const { passwordHash, passwordSalt } = hashPassword(value);
+  db.prepare(`INSERT INTO quick_pin_credentials (user_id, pin_hash, pin_salt, failed_attempts, locked_until, updated_at)
+    VALUES (?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id) DO UPDATE SET pin_hash=excluded.pin_hash, pin_salt=excluded.pin_salt, failed_attempts=0, locked_until=0, updated_at=CURRENT_TIMESTAMP`)
+    .run(user.id, passwordHash, passwordSalt);
+  auditLog('auth.quick_pin.set', 'user', user.id);
+  return { enabled: true };
+}
+
+function clearQuickPin(currentPassword = '') {
+  const user = getCurrentUser();
+  if (!user) throw new Error('نشست کاربر معتبر نیست.');
+  const db = requireDatabase();
+  const account = db.prepare('SELECT password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE id = ?').get(user.id);
+  if (getAppSettings().security?.passwordlessLogin !== true) {
+    const { passwordHash } = hashPassword(currentPassword, account.passwordSalt);
+    if (!crypto.timingSafeEqual(Buffer.from(passwordHash, 'hex'), Buffer.from(account.passwordHash, 'hex'))) throw new Error('رمز عبور فعلی نادرست است.');
+  }
+  db.prepare('DELETE FROM quick_pin_credentials WHERE user_id = ?').run(user.id);
+  auditLog('auth.quick_pin.clear', 'user', user.id);
+  return { enabled: false };
+}
+
+function getQuickPinStatus() {
+  const user = getCurrentUser();
+  if (!user) return { enabled: false };
+  const row = requireDatabase().prepare('SELECT failed_attempts AS failedAttempts, locked_until AS lockedUntil FROM quick_pin_credentials WHERE user_id = ?').get(user.id);
+  return { enabled: Boolean(row), lockedUntil: Number(row?.lockedUntil || 0), failedAttempts: Number(row?.failedAttempts || 0) };
+}
+
+function unlockWithQuickPin(pin) {
+  const user = getCurrentUser();
+  if (!user) throw new Error('نشست کاربر معتبر نیست.');
+  const db = requireDatabase();
+  const row = db.prepare('SELECT * FROM quick_pin_credentials WHERE user_id = ?').get(user.id);
+  if (!row) throw new Error('برای این کاربر PIN تنظیم نشده است.');
+  if (Number(row.locked_until || 0) > Date.now()) throw new Error('PIN موقتاً قفل شده است. چند دقیقه بعد دوباره تلاش کنید.');
+  const value = String(pin || '').trim();
+  const { passwordHash } = hashPassword(value, row.pin_salt);
+  const valid = /^\d{4,6}$/.test(value) && crypto.timingSafeEqual(Buffer.from(passwordHash, 'hex'), Buffer.from(row.pin_hash, 'hex'));
+  if (!valid) {
+    const attempts = Number(row.failed_attempts || 0) + 1;
+    db.prepare('UPDATE quick_pin_credentials SET failed_attempts = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
+      .run(attempts, attempts >= 5 ? Date.now() + 5 * 60 * 1000 : 0, user.id);
+    auditLog('auth.quick_pin.failed', 'user', user.id, { attempts });
+    throw new Error(attempts >= 5 ? 'پنج تلاش ناموفق؛ PIN برای ۵ دقیقه قفل شد.' : 'PIN نادرست است.');
+  }
+  db.prepare('UPDATE quick_pin_credentials SET failed_attempts = 0, locked_until = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(user.id);
+  auditLog('auth.quick_pin.unlock', 'user', user.id);
+  return user;
 }
 
 function beginWindowsHelloRegistration() {
@@ -3498,6 +3574,10 @@ module.exports = {
   finishWindowsHelloRegistration,
   beginWindowsHelloAuthentication,
   finishWindowsHelloAuthentication,
+  setQuickPin,
+  clearQuickPin,
+  getQuickPinStatus,
+  unlockWithQuickPin,
   createUser,
   listUsers,
   setUserActive,

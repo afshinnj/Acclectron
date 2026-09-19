@@ -45,9 +45,12 @@ document.addEventListener('keydown', (event) => {
 let uiCurrency = { code: 'IRR', name: '\u0631\u06cc\u0627\u0644', symbol: '\u0631\u06cc\u0627\u0644', position: 'suffix', decimals: 0, separator: true, inputUnit: 'rial' };
 let defaultSettlementMethod = 'cash';
 let uiTheme = 'dark';
+let uiThemePreference = 'dark';
 let uiCalendar = 'jalali';
 let uiNotifications = true;
 let uiShortcuts = true;
+let systemThemeMediaQuery;
+let systemThemeListenerBound = false;
 
 function applyAppearanceSettings(appearance = {}) {
   const previousCalendar = uiCalendar;
@@ -58,10 +61,21 @@ function applyAppearanceSettings(appearance = {}) {
     ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
     : theme;
   uiTheme = resolvedTheme;
+  uiThemePreference = theme;
   uiCalendar = 'jalali';
   uiNotifications = appearance.notifications !== false;
   uiShortcuts = appearance.shortcuts !== false;
   document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.dataset.themeMode = theme;
+  if (!systemThemeMediaQuery && window.matchMedia) systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+  if (systemThemeMediaQuery && !systemThemeListenerBound) {
+    const refreshSystemTheme = () => {
+      if (uiThemePreference === 'system') applyAppearanceSettings({ theme: 'system', notifications: uiNotifications, shortcuts: uiShortcuts, fontScale: Number(document.documentElement.style.getPropertyValue('--font-scale') || 1) * 100 });
+    };
+    if (systemThemeMediaQuery.addEventListener) systemThemeMediaQuery.addEventListener('change', refreshSystemTheme);
+    else systemThemeMediaQuery.addListener?.(refreshSystemTheme);
+    systemThemeListenerBound = true;
+  }
   const scale = Math.max(80, Math.min(130, Number(appearance.fontScale || 100))) / 100;
   document.documentElement.style.setProperty('--font-scale', String(scale));
   document.documentElement.style.zoom = String(scale);
@@ -1651,6 +1665,17 @@ function initializeSettingsPageV2() {
 }
 initializeSettingsPage = initializeSettingsPageV2;
 initializeSettingsPageV2();
+
+function installQuickPinSettings() {
+  const checks = $('#v2Passwordless')?.closest('.settings-checks');
+  if (!checks || $('#setQuickPinButton')) return;
+  checks.insertAdjacentHTML('afterend', '<div class="quick-pin-settings"><button id="setQuickPinButton" type="button" class="secondary">تنظیم یا تغییر PIN سریع</button><button id="clearQuickPinButton" type="button" class="secondary">حذف PIN سریع</button><small id="quickPinStatusText"></small></div>');
+  const refresh = async () => { try { const status = await window.api.auth.quickPin.status(); $('#quickPinStatusText').textContent = status.enabled ? 'PIN سریع فعال است.' : 'PIN سریع فعال نیست.'; } catch {} };
+  $('#setQuickPinButton').onclick = async () => { const pin = window.prompt('PIN چهار تا شش رقمی جدید را وارد کنید:'); if (pin == null) return; const password = window.prompt('برای تأیید، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.set(pin, password); showToast('PIN سریع تنظیم شد.'); refresh(); } catch (error) { showToast(readableError(error, 'تنظیم PIN ناموفق بود.'), true); } };
+  $('#clearQuickPinButton').onclick = async () => { const password = window.prompt('برای حذف PIN، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.clear(password); showToast('PIN سریع حذف شد.'); refresh(); } catch (error) { showToast(readableError(error, 'حذف PIN ناموفق بود.'), true); } };
+  refresh();
+}
+installQuickPinSettings();
 window.api.settings.get().then((settings) => {
   applyAppearanceSettings(settings.appearance || {});
   if (settings.currency) uiCurrency = { ...uiCurrency, ...settings.currency };
@@ -3568,6 +3593,39 @@ async function loadProfitLossPage() {
   };
 }
 
+let quickPinIdleTimer;
+let quickPinLocked = false;
+let quickPinMonitorStarted = false;
+
+function ensureQuickPinLockUI() {
+  if ($('#quickPinBackdrop')) return;
+  document.body.insertAdjacentHTML('beforeend', '<div id="quickPinBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:380px"><div class="modal-header"><div><span class="eyebrow">قفل سریع</span><h3>برنامه قفل شد</h3></div></div><form id="quickPinForm"><p>برای ادامه PIN سریع خود را وارد کنید.</p><label>PIN سریع<input id="quickPinInput" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" required></label><div id="quickPinError" class="form-error hidden"></div><button class="primary wide" type="submit">بازکردن قفل</button><button id="quickPinFullLogin" class="secondary wide" type="button">ورود با رمز عبور</button></form></div></div>');
+  $('#quickPinForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try { await window.api.auth.quickPin.unlock($('#quickPinInput').value); quickPinLocked = false; $('#quickPinInput').value = ''; $('#quickPinBackdrop').classList.add('hidden'); resetQuickPinIdleTimer(); }
+    catch (error) { const box = $('#quickPinError'); box.textContent = readableError(error, 'بازکردن قفل ناموفق بود.'); box.classList.remove('hidden'); }
+  });
+  $('#quickPinFullLogin').addEventListener('click', () => { quickPinLocked = true; clearTimeout(quickPinIdleTimer); $('#quickPinBackdrop').classList.add('hidden'); $('#loginBackdrop').classList.remove('hidden'); $('#loginPassword')?.focus(); });
+}
+
+function resetQuickPinIdleTimer() {
+  clearTimeout(quickPinIdleTimer);
+  if (quickPinLocked) return;
+  quickPinIdleTimer = setTimeout(async () => {
+    try { const status = await window.api.auth.quickPin.status(); if (status.enabled) { quickPinLocked = true; ensureQuickPinLockUI(); $('#quickPinBackdrop').classList.remove('hidden'); $('#quickPinInput').focus(); } } catch {}
+  }, 15 * 60 * 1000);
+}
+
+function startQuickPinIdleMonitor() {
+  ensureQuickPinLockUI();
+  if (!quickPinMonitorStarted) {
+    quickPinMonitorStarted = true;
+    ['mousemove', 'mousedown', 'keydown', 'touchstart'].forEach((type) => document.addEventListener(type, resetQuickPinIdleTimer, { passive: true }));
+  }
+  quickPinLocked = false;
+  resetQuickPinIdleTimer();
+}
+
 async function initializeAuth() {
   initializeOperationsPages();
   const backdrop = $('#loginBackdrop');
@@ -3580,7 +3638,7 @@ async function initializeAuth() {
   } catch {}
   try {
     const current = await window.api.auth.current();
-    if (current) { backdrop.classList.add('hidden'); return; }
+    if (current) { backdrop.classList.add('hidden'); startQuickPinIdleMonitor(); return; }
   } catch {}
 }
 
@@ -3595,6 +3653,7 @@ function installLoginSubmitGuard() {
       await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
       backdrop?.classList.add('hidden');
       showToast('ورود موفق بود.');
+      startQuickPinIdleMonitor();
     } catch (e) {
       if (error) {
         error.textContent = readableError(e, 'ورود ناموفق بود.');

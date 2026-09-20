@@ -97,7 +97,7 @@ function applyProductUpdates(updates = []) {
       retailPrice: Math.max(0, Math.round(Number(update.retailPrice) || 0))
     });
     auditLog('assistant.apply', 'product', id, {
-      purchasePrice: before.purchasePrice, wholesalePrice: before.wholesalePrice, retailPrice: before.salePrice
+      purchasePrice: before.purchasePrice, wholesalePrice: before.wholesalePrice, retailPrice: (before.retailPrice ?? before.salePrice)
     });
     applied.push(id);
   }

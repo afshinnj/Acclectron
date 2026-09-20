@@ -50,6 +50,7 @@ const {
   updateSale,
   settleInvoice,
   cancelInvoice,
+  setSalePinned,
   createSaleReturn,
   getSaleReturnDetails,
   listSalesReturns,
@@ -84,8 +85,11 @@ const {
   recordInstallmentPayment,
   changeCurrentUserPassword
 } = require('./src/main/database');
+const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
+const { planCommand, applyProductUpdates } = require('./src/main/ai/assistant');
 
 let mainWindow;
+let isWindowCloseApproved = false;
 let autoBackupTimer;
 const pendingImports = new Map();
 const appIconPath = path.join(__dirname, 'assets', 'icon.png');
@@ -199,6 +203,40 @@ function registerIpcHandlers() {
     return { canceled: false, path: destination };
   });
   ipcMain.handle('products:search', (_event, query = '') => searchProducts(query));
+  const aiModelRoots = [
+    process.env.ACCLETRON_AI_MODELS || null,
+    path.join(__dirname, 'assets', 'models'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'ai-models') : null,
+    path.join(app.getPath('userData'), 'models')
+  ].filter(Boolean);
+  ipcMain.handle('ai:status', () => aiStatus(aiModelRoots));
+  ipcMain.handle('ai:semantic-search', async (_event, payload = {}) => {
+    const query = String(payload.query || '').trim();
+    const status = aiStatus(aiModelRoots);
+    if (!query) return { available: status.available, results: [] };
+    if (!status.available) return { available: false, results: [] };
+    const limit = Math.max(1, Math.min(100, Number(payload.limit || 50)));
+    try {
+      const results = await rankProductsBySimilarity(query, listProducts('', ''), aiModelRoots);
+      return { available: true, results: results.slice(0, limit) };
+    } catch (error) {
+      return { available: false, results: [], reason: String(error?.message || error) };
+    }
+  });
+  ipcMain.handle('ai:assistant-plan', async (_event, payload = {}) => planCommand(String(payload.text || ''), aiModelRoots));
+  ipcMain.handle('ai:assistant-apply', (_event, payload = {}) => applyProductUpdates(payload.updates || []));
+  ipcMain.handle('ai:assistant-export', async (_event, payload = {}) => {
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: 'خروجی CSV دستیار هوشمند',
+      defaultPath: String(payload.fileName || `دستیار-هوشمند-${new Date().toISOString().slice(0, 10)}.csv`).replace(/\.csv$/i, '') + '.csv',
+      filters: [{ name: 'Excel CSV', extensions: ['csv'] }]
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    fs.writeFileSync(selection.filePath, '\uFEFF' + rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
+    return { canceled: false, filePath: selection.filePath };
+  });
   ipcMain.handle('products:list', (_event, payload = {}) => listProducts(payload.query, payload.categoryId));
   ipcMain.handle('products:next-code', (_event, categoryId, excludeId = null) => getNextProductCode(categoryId, excludeId));
   ipcMain.handle('products:check-duplicate', (_event, payload = {}, excludeId = null) => checkProductDuplicate(payload, excludeId));
@@ -295,7 +333,7 @@ function registerIpcHandlers() {
   ipcMain.handle('parties:create', (_event, payload) => createParty(payload));
   ipcMain.handle('parties:update', (_event, id, payload) => updateParty(id, payload));
   ipcMain.handle('parties:set-active', (_event, id, active) => setPartyActive(id, active));
-  ipcMain.handle('dashboard:summary', () => getDashboardSummary());
+  ipcMain.handle('dashboard:summary', (_event, payload = {}) => getDashboardSummary(payload));
   ipcMain.handle('notifications:list', (_event, payload = {}) => {
     const result = listNotifications(payload);
     const settings = getAppSettings();
@@ -374,6 +412,10 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('invoices:settle', (_event, kind, id, payload) => settleInvoice(kind, id, payload));
   ipcMain.handle('invoices:cancel', (_event, kind, id) => cancelInvoice(kind, id));
+  ipcMain.handle('invoices:set-pinned', (_event, kind, id, pinned) => {
+    if (kind !== 'sale') throw new Error('سنجاق کردن فقط برای فاکتورهای فروش فعال است.');
+    return setSalePinned(id, pinned);
+  });
   ipcMain.handle('returns:sale:create', (_event, payload) => createSaleReturn(payload));
   ipcMain.handle('returns:sale:details', (_event, id) => getSaleReturnDetails(id));
   ipcMain.handle('returns:sale:list', (_event, payload) => listSalesReturns(payload));
@@ -412,7 +454,11 @@ function registerIpcHandlers() {
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
   });
-  ipcMain.on('window:close', () => mainWindow?.close());
+  ipcMain.on('window:close', () => mainWindow?.webContents.send('window:close-requested'));
+  ipcMain.on('window:close-confirmed', () => {
+    isWindowCloseApproved = true;
+    mainWindow?.close();
+  });
   ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
 }
 
@@ -462,6 +508,7 @@ function runAutoBackupIfDue() {
 }
 
 const createWindow = () => {
+  isWindowCloseApproved = false;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -481,6 +528,11 @@ const createWindow = () => {
   });
 
   mainWindow.loadFile('index.html');
+  mainWindow.on('close', (event) => {
+    if (isWindowCloseApproved) return;
+    event.preventDefault();
+    mainWindow.webContents.send('window:close-requested');
+  });
   mainWindow.once('ready-to-show', () => {
     mainWindow.maximize();
     mainWindow.show();
@@ -500,6 +552,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  isWindowCloseApproved = true;
   if (autoBackupTimer) clearInterval(autoBackupTimer);
   closeDatabase();
 });

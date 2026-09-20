@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('api', {
     template: () => ipcRenderer.invoke('products:template'),
     export: () => ipcRenderer.invoke('products:export')
   },
+  ai: {
+    status: () => ipcRenderer.invoke('ai:status'),
+    semanticSearch: (payload) => ipcRenderer.invoke('ai:semantic-search', payload),
+    plan: (text) => ipcRenderer.invoke('ai:assistant-plan', { text }),
+    apply: (updates) => ipcRenderer.invoke('ai:assistant-apply', { updates }),
+    exportCsv: (rows, fileName) => ipcRenderer.invoke('ai:assistant-export', { rows, fileName })
+  },
   categories: {
     list: (includeInactive) => ipcRenderer.invoke('categories:list', includeInactive),
     create: (payload) => ipcRenderer.invoke('categories:create', payload),
@@ -64,7 +71,7 @@ contextBridge.exposeInMainWorld('api', {
     recordPayment: (id, payload) => ipcRenderer.invoke('installments:record-payment', id, payload)
   },
   dashboard: {
-    summary: () => ipcRenderer.invoke('dashboard:summary')
+    summary: (payload) => ipcRenderer.invoke('dashboard:summary', payload)
   },
   notifications: {
     list: (payload) => ipcRenderer.invoke('notifications:list', payload)
@@ -135,12 +142,19 @@ contextBridge.exposeInMainWorld('api', {
     details: (kind, id) => ipcRenderer.invoke('invoices:details', kind, id),
     update: (kind, id, payload) => ipcRenderer.invoke('invoices:update', kind, id, payload),
     settle: (kind, id, payload) => ipcRenderer.invoke('invoices:settle', kind, id, payload),
-    cancel: (kind, id) => ipcRenderer.invoke('invoices:cancel', kind, id)
+    cancel: (kind, id) => ipcRenderer.invoke('invoices:cancel', kind, id),
+    setPinned: (kind, id, pinned) => ipcRenderer.invoke('invoices:set-pinned', kind, id, pinned)
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
     close: () => ipcRenderer.send('window:close'),
+    confirmClose: () => ipcRenderer.send('window:close-confirmed'),
+    onCloseRequested: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on('window:close-requested', listener);
+      return () => ipcRenderer.removeListener('window:close-requested', listener);
+    },
     isMaximized: () => ipcRenderer.invoke('window:is-maximized')
   }
 });

@@ -18,8 +18,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check src/main/database.js && node --check src/main/domain/sales.js",
-    "test": "node --test --test-concurrency=1 test/database.test.js test/sales.test.js",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check src/main/database.js && node --check src/main/domain/sales.js && node --check src/main/ai/semantic.js",
+    "test": "node --test --test-concurrency=1 test/database.test.js test/sales.test.js test/semantic.test.js",
+    "ai:fetch": "node scripts/fetch-ai-model.js",
     "build:portable": "powershell -ExecutionPolicy Bypass -File ./build-portable.ps1",
     "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/generate-win-icon.ps1 && electron-builder --win nsis",
     "release": "npm run check && npm test && npm run build:portable"
@@ -35,8 +36,18 @@
       "renderer.js",
       "styles.css",
       "assets/**/*",
+      "!assets/models/**",
       "src/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/onnxruntime-node/**"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/models",
+        "to": "ai-models"
+      }
     ],
     "directories": {
       "output": "dist/installer",
@@ -68,6 +79,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "yauzl": "^2.10.0"
   }
 }

@@ -400,6 +400,7 @@ function getDatabase(userDataPath) {
   addColumnIfMissing(database, 'sales', 'item_count', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'sales', "source", "TEXT NOT NULL DEFAULT 'invoice'");
   addColumnIfMissing(database, 'sales', 'party_id', 'INTEGER REFERENCES parties(id) ON DELETE SET NULL');
+  addColumnIfMissing(database, 'sales', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'sales', 'party_name', 'TEXT');
   addColumnIfMissing(database, 'sales', 'party_phone', 'TEXT');
   addColumnIfMissing(database, 'sales', 'party_address', 'TEXT');
@@ -545,7 +546,7 @@ function getCurrentUser() {
 
 function requirePermission(permission) {
   const user = getCurrentUser();
-  if (!user) return true;
+  if (!user) throw new Error('ابتدا وارد حساب کاربری شوید.');
   const permissions = ROLE_PERMISSIONS[user.role] || [];
   if (permissions.includes('*') || permissions.includes(permission)) return true;
   throw new Error('کاربر جاری مجوز انجام این عملیات را ندارد.');
@@ -718,6 +719,7 @@ function createInstallmentPlan(payload = {}) {
     amount: Math.round(Number(item.amount || 0))
   }));
   if (installments.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate) || item.amount <= 0)) throw new Error('تاریخ یا مبلغ قسط نامعتبر است.');
+  if (installments.some((item) => !isValidIsoDate(item.dueDate))) throw new Error('تاریخ قسط نامعتبر است.');
   const totalAmount = installments.reduce((sum, item) => sum + item.amount, 0);
   if (totalAmount !== Number(invoice.remainingAmount)) throw new Error('جمع اقساط باید دقیقاً برابر مانده فاکتور باشد.');
   db.exec('BEGIN IMMEDIATE');
@@ -1027,7 +1029,7 @@ function saveAppSettings(payload = {}) {
   });
   const appearance = payload.appearance || {};
   Object.assign(values, {
-    theme: ['dark', 'light', 'system'].includes(String(appearance.theme)) ? String(appearance.theme) : 'dark',
+    theme: ['dark', 'light', 'system', 'hacker'].includes(String(appearance.theme)) ? String(appearance.theme) : 'dark',
     calendar: ['gregorian', 'jalali'].includes(String(appearance.calendar)) ? String(appearance.calendar) : 'gregorian',
     fontScale: Math.max(80, Math.min(130, Number(appearance.fontScale || 100))),
     notifications: appearance.notifications !== false,
@@ -1058,14 +1060,19 @@ function saveAppSettings(payload = {}) {
   }
 }
 
-function searchProducts(query = '') {
-  const db = requireDatabase();
-  const normalizeSearch = (value) => normalizePersianText(String(value ?? ''))
-    .replace(/[يى]/g, 'ی')
-    .replace(/[ك]/g, 'ک')
+// Unifies Persian/Arabic letter and digit variants so product search ignores
+// them: ۰-۹ and ٠-٩ map to 0-9, ي/ك map to ی/ک and ZWNJ becomes a space.
+function normalizeSearchText(value) {
+  return normalizePersianText(String(value ?? ''))
     .replace(/[\u06F0-\u06F9]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[\u0660-\u0669]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
     .toLowerCase()
     .trim();
+}
+
+function searchProducts(query = '') {
+  const db = requireDatabase();
+  const normalizeSearch = normalizeSearchText;
   const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean);
   const rows = db.prepare(`
     SELECT p.id, p.code, p.name, p.barcode,
@@ -1094,9 +1101,9 @@ function searchProducts(query = '') {
 
 function listProducts(query = '', categoryId = '') {
   const db = requireDatabase();
-  const term = `%${String(query).trim()}%`;
   const category = categoryId ? Number(categoryId) : null;
-  return db.prepare(`
+  const tokens = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  const rows = db.prepare(`
     SELECT p.id, p.code, p.name, p.barcode,
       CASE WHEN p.retail_price > 0 THEN p.retail_price ELSE p.sale_price END AS salePrice,
       p.purchase_price AS purchasePrice,
@@ -1109,10 +1116,14 @@ function listProducts(query = '', categoryId = '') {
     LEFT JOIN categories c ON c.id = p.category_id
     LEFT JOIN units u ON u.id = p.unit_id
     WHERE (? = 1 OR p.is_active = 1)
-      AND (p.name LIKE ? OR p.code LIKE ? OR COALESCE(p.barcode, '') LIKE ?)
       AND (? IS NULL OR p.category_id = ?)
     ORDER BY p.is_active DESC, p.name COLLATE NOCASE
-  `).all(1, term, term, term, category, category);
+  `).all(1, category, category);
+  if (!tokens.length) return rows;
+  return rows.filter((row) => {
+    const haystack = normalizeSearchText([row.name, row.code, row.barcode, row.categoryName].filter(Boolean).join(' '));
+    return tokens.every((token) => haystack.includes(token));
+  });
 }
 
 function listCategories(includeInactive = false) {
@@ -1665,10 +1676,16 @@ function searchCustomers(query = '') {
   `).all(term, term, term);
 }
 
-function getDashboardSummary() {
+function getDashboardSummary(payload = {}) {
   const db = requireDatabase();
-  const today = new Date().toISOString().slice(0, 10);
+  const requestedToday = String(payload.today || '').trim();
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(requestedToday)
+    ? requestedToday
+    : new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
+  const weekStart = new Date(`${today}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 1) % 7));
+  const weekStartIso = weekStart.toISOString().slice(0, 10);
   const todaySales = db.prepare(
     "SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS count FROM sales WHERE status = 'active' AND date = ?"
   ).get(today);
@@ -1694,9 +1711,9 @@ function getDashboardSummary() {
     SELECT s.date, COALESCE(SUM(s.total), 0) AS sales,
       COALESCE(SUM(s.total - s.tax - s.cost_total), 0) AS profit
     FROM sales s
-    WHERE s.status = 'active' AND s.date >= date(?, '-13 day')
+    WHERE s.status = 'active' AND s.date >= ? AND s.date <= ?
     GROUP BY s.date ORDER BY s.date
-  `).all(today);
+  `).all(weekStartIso, today);
   const paymentBreakdown = db.prepare(`
     SELECT ip.method, COALESCE(SUM(ip.amount), 0) AS amount
     FROM invoice_payments ip
@@ -1768,6 +1785,8 @@ function getDashboardSummary() {
     productCount: Number(inventory.count),
     inventoryValue: { purchase: Number(inventoryValue.purchaseValue), retail: Number(inventoryValue.retailValue) },
     lowStock: Number(lowStock.count),
+    salesTrendStart: weekStartIso,
+    salesTrendEnd: today,
     salesTrend: salesTrend.map((row) => ({ date: row.date, sales: Number(row.sales), profit: Number(row.profit) })),
     paymentBreakdown: paymentBreakdown.map((row) => ({ method: row.method, amount: Number(row.amount) })),
     topProducts: topProducts.map((row) => ({ name: row.name, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
@@ -2032,7 +2051,15 @@ function insertInvoicePayments(db, invoiceColumn, invoiceId, payments) {
 
 function normalizeInvoiceDate(value) {
   const text = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 10);
+  return isValidIsoDate(text) ? text : new Date().toISOString().slice(0, 10);
+}
+
+function isValidIsoDate(value) {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const [year, month, day] = text.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
 function nextInvoiceNumber(db, kind, date) {
@@ -2070,11 +2097,16 @@ function getNextInvoiceNumber(kind, date) {
   return nextInvoiceNumber(db, kind, normalizeInvoiceDate(date));
 }
 
-function getPartySnapshot(db, partyId, fallback = {}) {
+function getPartySnapshot(db, partyId, fallback = {}, allowedTypes = []) {
   const party = partyId ? db.prepare(`
     SELECT id, trim(first_name || ' ' || COALESCE(last_name, '')) AS name,
-      code, phone, mobile, address FROM parties WHERE id = ?
+      code, phone, mobile, address, party_type AS partyType
+    FROM parties WHERE id = ? AND is_active = 1
   `).get(Number(partyId)) : null;
+  if (partyId && !party) throw new Error('طرف‌حساب انتخاب‌شده فعال یا معتبر نیست.');
+  if (party && allowedTypes.length && !allowedTypes.includes(party.partyType)) {
+    throw new Error('نوع طرف‌حساب انتخاب‌شده برای این فاکتور معتبر نیست.');
+  }
   return {
     partyId: party?.id || null,
     partyName: String(party?.name || fallback.name || '').trim() || null,
@@ -2104,7 +2136,7 @@ function rejectSalesBelowPurchasePrice(pricedItems) {
   throw new Error(`قیمت فروش «${lossMakingItem.name}» نمی‌تواند کمتر از قیمت خرید باشد.`);
 }
 
-function getAvailableSaleProducts(db, items) {
+function getAvailableSaleProducts(db, items, enforceStock = true) {
   const requestedQuantities = new Map();
   for (const item of items) {
     const productId = Number(item.productId);
@@ -2118,7 +2150,7 @@ function getAvailableSaleProducts(db, items) {
   for (const [productId, requestedQuantity] of requestedQuantities) {
     const product = findProduct.get(productId);
     if (!product) throw new Error('کالای انتخاب‌شده پیدا نشد.');
-    if (Number(product.stock) < requestedQuantity) {
+    if (enforceStock && Number(product.stock) < requestedQuantity) {
       throw new Error(`موجودی «${product.name}» کافی نیست.`);
     }
     products.set(productId, product);
@@ -2130,10 +2162,11 @@ function createSale(payload = {}) {
   const db = requireDatabase();
   requirePermission('sales');
   const baseTotals = calculateSaleTotals(payload.items, payload.discount, payload.tax, 0);
+  validateInventoryQuantities(db, baseTotals.items);
   const paymentTotals = normalizeInvoicePayments(payload.payments, baseTotals.total, payload.paidAmount);
   const totals = { ...baseTotals, ...paymentTotals };
   const customerId = payload.customerId ? Number(payload.customerId) : null;
-  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress });
+  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress }, ['customer', 'both']);
   const partyId = party.partyId;
   const date = normalizeInvoiceDate(payload.date);
   const invoiceNumber = String(payload.invoiceNumber || '').trim()
@@ -2141,7 +2174,7 @@ function createSale(payload = {}) {
 
   db.exec('BEGIN IMMEDIATE');
   try {
-    const products = getAvailableSaleProducts(db, totals.items);
+    const products = getAvailableSaleProducts(db, totals.items, getAppSettings().sales.preventOversell !== false && getAppSettings().product.allowNegativeStock !== true);
     let pricedItems = totals.items.map((item) => {
       const product = products.get(item.productId);
       const purchasePrice = Number(product.purchasePrice || 0);
@@ -2205,13 +2238,25 @@ function createSale(payload = {}) {
   }
 }
 
+function validateInventoryQuantities(db, items) {
+  const globalFractional = getAppSettings().product.allowFractional !== false;
+  const find = db.prepare('SELECT p.name, u.allow_fraction AS allowFraction FROM products p LEFT JOIN units u ON u.id = p.unit_id WHERE p.id = ?');
+  for (const item of items) {
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error('مقدار کالا نامعتبر است.');
+    if (!globalFractional && !Number.isInteger(item.quantity)) throw new Error('مقدار کسری کالا در تنظیمات غیرفعال است.');
+    const product = find.get(item.productId);
+    if (!product) throw new Error('کالای انتخاب‌شده پیدا نشد.');
+    if (!Number.isInteger(item.quantity) && product.allowFraction === 0) throw new Error(`واحد کالای «${product.name}» مقدار کسری را پشتیبانی نمی‌کند.`);
+  }
+}
+
 function createPurchase(payload = {}) {
   const db = requireDatabase();
   requirePermission('purchases');
   const items = (payload.items || []).map((item) => {
     // Purchase quantities are whole inventory units in the invoice editor.
     // Normalize API payloads too so stock moves by whole units.
-    const quantity = Math.max(1, Math.round(Number(item.quantity)));
+    const quantity = Number(item.quantity);
     const unitPrice = Math.round(Number(item.unitPrice) || 0);
     const itemDiscount = Math.round(Number(item.discount) || 0);
     if (!Number.isFinite(quantity) || quantity <= 0 || unitPrice < 0 || itemDiscount < 0) {
@@ -2227,6 +2272,7 @@ function createPurchase(payload = {}) {
   });
   if (!items.length) throw new Error('خرید باید حداقل یک کالا داشته باشد.');
 
+  validateInventoryQuantities(db, items);
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const discount = Math.max(0, Math.round(Number(payload.discount) || 0));
   const tax = Math.max(0, Math.round(Number(payload.tax) || 0));
@@ -2235,7 +2281,7 @@ function createPurchase(payload = {}) {
   const paidAmount = paymentTotals.paidAmount;
   const date = normalizeInvoiceDate(payload.date);
   const invoiceNumber = String(payload.invoiceNumber || '').trim() || nextInvoiceNumber(db, 'purchase', date);
-  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress });
+  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress }, ['supplier', 'both']);
   const partyId = party.partyId;
 
   db.exec('BEGIN IMMEDIATE');
@@ -2302,6 +2348,8 @@ function invoiceListQuery(kind, payload = {}) {
   const partyColumn = kind === 'sale' ? 'customer_id' : 'supplier_id';
   const query = String(payload.query || '').trim();
   const term = `%${query}%`;
+  const productQuery = String(payload.productQuery || '').trim();
+  const productTerm = `%${productQuery}%`;
   const from = String(payload.from || '').trim();
   const to = String(payload.to || '').trim();
   const requestedStatus = String(payload.status || '');
@@ -2320,7 +2368,7 @@ function invoiceListQuery(kind, payload = {}) {
   const rows = db.prepare(`
     SELECT i.id, i.invoice_number AS invoiceNumber, i.date, i.subtotal, i.discount, i.tax,
       i.total, i.paid_amount AS paidAmount, i.remaining_amount AS remainingAmount,
-      i.status, ${sourceExpression} AS source, i.created_at AS createdAt,
+      i.status, ${sourceExpression} AS source, ${kind === 'sale' ? 'i.pinned' : '0'} AS pinned, i.created_at AS createdAt,
       COALESCE(i.party_name, trim(p.first_name || ' ' || COALESCE(p.last_name, '')), c.name, s.name, '') AS partyName,
       COALESCE(i.party_phone, p.phone, p.mobile, c.phone, s.phone, '') AS partyPhone,
       COALESCE(i.party_address, p.address, s.address, '') AS partyAddress,
@@ -2331,13 +2379,20 @@ function invoiceListQuery(kind, payload = {}) {
     LEFT JOIN customers c ON c.id = i.${partyColumn}
     LEFT JOIN suppliers s ON s.id = i.${partyColumn}
     WHERE (? = '' OR i.invoice_number LIKE ? OR COALESCE(i.party_name, '') LIKE ? OR COALESCE(p.first_name || ' ' || p.last_name, '') LIKE ? OR COALESCE(c.name, '') LIKE ? OR COALESCE(s.name, '') LIKE ? OR COALESCE(c.phone, '') LIKE ? OR COALESCE(s.phone, '') LIKE ?)
+      AND (? = '' OR EXISTS (
+        SELECT 1
+        FROM ${kind === 'sale' ? 'sale_items' : 'purchase_items'} ii
+        JOIN products product ON product.id = ii.product_id
+        WHERE ii.${kind === 'sale' ? 'sale' : 'purchase'}_id = i.id
+          AND product.name LIKE ?
+      ))
       AND (? = '' OR i.date >= ?) AND (? = '' OR i.date <= ?)
       ${mergeFilter}
       AND (? = '' OR i.status = ?)
-    ORDER BY i.date DESC, i.id DESC
+    ORDER BY pinned DESC, i.date DESC, i.id DESC
     LIMIT 500
-  `).all(query, term, term, term, term, term, term, term, from, from, to, to, status, status);
-  return rows.map((row) => ({ ...row, itemCount: Number(row.itemCount || 0) }));
+  `).all(query, term, term, term, term, term, term, term, productQuery, productTerm, from, from, to, to, status, status);
+  return rows.map((row) => ({ ...row, itemCount: Number(row.itemCount || 0), pinned: Boolean(row.pinned) }));
 }
 
 function listSales(payload = {}) { return invoiceListQuery('sale', payload); }
@@ -2524,9 +2579,10 @@ function updateSale(id, payload = {}) {
   if (!existing) throw new Error('فاکتور پیدا نشد.');
   if (existing.status === 'cancelled') throw new Error('فاکتور لغوشده قابل ویرایش نیست.');
   const baseTotals = calculateSaleTotals(payload.items, payload.discount, payload.tax, 0);
+  validateInventoryQuantities(db, baseTotals.items);
   const paymentTotals = normalizeInvoicePayments(payload.payments, baseTotals.total, payload.paidAmount);
   const totals = { ...baseTotals, ...paymentTotals };
-  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress });
+  const party = getPartySnapshot(db, payload.partyId, { name: payload.partyName, phone: payload.partyPhone, address: payload.partyAddress }, ['customer', 'both']);
   const date = normalizeInvoiceDate(payload.date);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -2536,7 +2592,7 @@ function updateSale(id, payload = {}) {
     if (existing.party_id && Number(existing.remaining_amount || 0) > 0) {
       db.prepare('UPDATE parties SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existing.remaining_amount, existing.party_id);
     }
-    const products = getAvailableSaleProducts(db, totals.items);
+    const products = getAvailableSaleProducts(db, totals.items, getAppSettings().sales.preventOversell !== false && getAppSettings().product.allowNegativeStock !== true);
     let pricedItems = totals.items.map((item) => {
       const product = products.get(item.productId);
       const purchasePrice = Number(product.purchasePrice || 0);
@@ -2674,6 +2730,17 @@ function cancelInvoice(kind, id) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+function setSalePinned(id, pinned) {
+  const db = requireDatabase();
+  requirePermission('sales');
+  const saleId = Number(id);
+  const result = db.prepare('UPDATE sales SET pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(pinned ? 1 : 0, saleId);
+  if (!result.changes) throw new Error('فاکتور پیدا نشد.');
+  auditLog(pinned ? 'sale.pin' : 'sale.unpin', 'sale', saleId);
+  return { id: saleId, pinned: Boolean(pinned) };
 }
 
 function nextReturnNumber(db, date) {
@@ -3362,6 +3429,7 @@ module.exports = {
   setProductActive,
   updateCategory,
   updateProduct,
+  getProduct,
   updateProductQuick,
   createSaleReturn,
   getSaleReturnDetails,
@@ -3402,4 +3470,5 @@ module.exports = {
   ,previewProductImport
   ,importProducts
   ,getCurrencyInputFactor
+  ,setSalePinned
 };

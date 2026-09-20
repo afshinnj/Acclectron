@@ -1,0 +1,4 @@
+This folder holds the offline AI model for semantic product search.
+Run `npm run ai:fetch` once (requires internet) to download it into
+multilingual-minilm/. The folder contents are git-ignored on purpose;
+only this placeholder is tracked.

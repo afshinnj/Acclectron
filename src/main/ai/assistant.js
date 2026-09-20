@@ -3,7 +3,7 @@
 // into a structured plan (product selection + optional price adjustment),
 // previewable and editable before anything is written to the database.
 const { normalizeProductText, rankProductsBySimilarity } = require('./semantic');
-const { listProducts, updateProductQuick, auditLog } = require('../database');
+const { listProducts, getProduct, updateProductQuick, auditLog } = require('../database');
 
 const STOPWORDS = new Set(['لیست', 'کن', 'کنید', 'بده', 'بدهید', 'انجام', 'نمایید', 'را', 'به', 'از', 'و', 'یا', 'مبلغ', 'قیمت', 'قیمتها', 'قیمت‌ها', 'خرید', 'عمده', 'فروش', 'اضافه', 'افزایش', 'افزایشبده', 'کاهش', 'کم', 'زیاد', 'بیشتر', 'های', 'هایی', 'ها', 'نمایش', 'نشون', 'ده', 'است', 'همه', 'تمام', 'کالا', 'کالاها', 'محصول', 'محصولات', 'درصد', 'درصدی', 'تومان', 'ریال', 'خروجی', 'بگیر', 'اکسل', 'csv', 'excel', 'شد', 'شود', 'شون']);
 
@@ -91,13 +91,23 @@ function applyProductUpdates(updates = []) {
   for (const update of updates.slice(0, 500)) {
     const id = Number(update.id);
     if (!Number.isFinite(id)) continue;
-    const before = updateProductQuick(id, {
+    // Capture previous state
+    let before = null;
+    try { before = getProduct(id); } catch { /* missing product handled below */ }
+    // Apply update and capture after state
+    const after = updateProductQuick(id, {
       purchasePrice: Math.max(0, Math.round(Number(update.purchasePrice) || 0)),
       wholesalePrice: Math.max(0, Math.round(Number(update.wholesalePrice) || 0)),
       retailPrice: Math.max(0, Math.round(Number(update.retailPrice) || 0))
     });
+    // Log both before and after for auditability
     auditLog('assistant.apply', 'product', id, {
-      purchasePrice: before.purchasePrice, wholesalePrice: before.wholesalePrice, retailPrice: (before.retailPrice ?? before.salePrice)
+      before: before ? {
+        purchasePrice: before.purchasePrice, wholesalePrice: before.wholesalePrice, retailPrice: (before.retailPrice ?? before.salePrice)
+      } : null,
+      after: {
+        purchasePrice: after.purchasePrice, wholesalePrice: after.wholesalePrice, retailPrice: (after.retailPrice ?? after.salePrice)
+      }
     });
     applied.push(id);
   }

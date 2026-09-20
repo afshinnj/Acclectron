@@ -20,6 +20,7 @@ const {
   listSales,
   updateSale,
   settleInvoice,
+  setSalePinned,
   listPurchases,
   createSaleReturn,
   listSalesReturns,
@@ -47,6 +48,7 @@ const {
   updateCheckStatus,
   changeCurrentUserPassword,
   logoutUser,
+  setCurrentUser,
   getProfitLossReport,
   closeDailyAccount,
   listDailyClosures,
@@ -66,6 +68,8 @@ function openTestDatabase({ fixtureProduct = true } = {}) {
       'INSERT INTO products (code, name, barcode, sale_price, stock, minimum_stock) VALUES (?, ?, ?, ?, ?, ?)'
     ).run('TEST-001', 'کالای آزمون', '0000000000000', 8500000, 24, 5);
   }
+  const admin = db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
+  setCurrentUser(admin.id);
   return { directory, db };
 }
 
@@ -385,7 +389,7 @@ test('failed purchase rolls back header, items, stock and price changes', () => 
         { productId: product.id, quantity: 1, unitPrice: 99999 },
         { productId: 99999999, quantity: 1, unitPrice: 1 }
       ]
-    }), /کالای خرید پیدا نشد/);
+    }), /کالای (خرید|انتخاب‌شده) پیدا نشد/);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM purchases WHERE invoice_number = ?').get('P-TEST-ROLLBACK').count, 0);
     assert.equal(db.prepare('SELECT stock, purchase_price FROM products WHERE id = ?').get(product.id).stock, product.stock);
   } finally {
@@ -462,6 +466,59 @@ test('editing a sale refreshes its stock movement audit trail', () => {
       "SELECT quantity FROM stock_movements WHERE type = 'sale' AND reference_type = 'sale' AND reference_id = ?"
     ).all(sale.id).map((row) => ({ ...row }));
     assert.deepEqual(movements, [{ quantity: -2 }]);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('lists products with word-based search regardless of word order or digit style', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const insert = db.prepare('INSERT INTO products (code, name, sale_price, stock) VALUES (?, ?, ?, ?)');
+    insert.run('P-TWIN', 'تایمر دوقلو پاکشوما 8 سیم', 1000, 5);
+    insert.run('P-WIRE', 'سیم مفتالی ۱.۵', 500, 3);
+    insert.run('P-TIMER', 'تایمر دیجیتال هوشمند', 700, 2);
+
+    assert.deepEqual(listProducts('تایمر پاکشوما').map((row) => row.code), ['P-TWIN']);
+    assert.deepEqual(listProducts('8 سیم').map((row) => row.code), ['P-TWIN']);
+    assert.deepEqual(listProducts('۸').map((row) => row.code), ['P-TWIN']);
+    assert.deepEqual(listProducts('سیم').map((row) => row.code).sort(), ['P-TWIN', 'P-WIRE']);
+    assert.deepEqual(listProducts('').map((row) => row.code).sort(), ['P-TIMER', 'P-TWIN', 'P-WIRE']);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('pins a sale invoice to the top of the invoice list and unpins it again', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 10, purchase_price = 0 WHERE id = ?').run(product.id);
+    const older = createSale({
+      invoiceNumber: 'S-PIN-OLDER',
+      date: '2026-09-01',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }]
+    });
+    const newer = createSale({
+      invoiceNumber: 'S-PIN-NEWER',
+      date: '2026-09-03',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }]
+    });
+
+    assert.equal(listSales({}).map((row) => row.id)[0], newer.id);
+
+    setSalePinned(older.id, true);
+    const rows = listSales({});
+    assert.equal(rows[0].id, older.id);
+    assert.equal(rows[0].pinned, true);
+    assert.equal(rows[1].id, newer.id);
+    assert.equal(rows[1].pinned, false);
+
+    setSalePinned(older.id, false);
+    assert.equal(listSales({})[0].id, newer.id);
+    assert.equal(db.prepare('SELECT pinned FROM sales WHERE id = ?').get(older.id).pinned, 0);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -679,11 +736,32 @@ test('lists purchases and moves whole inventory units', () => {
       invoiceNumber: 'P-LIST-001',
       items: [{ productId: product.id, quantity: 1.1, unitPrice: 100000 }]
     });
-    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 2);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 2.1);
     const rows = listPurchases({});
     assert.equal(rows.length, 1);
     assert.equal(rows[0].invoiceNumber, 'P-LIST-001');
     assert.equal(rows[0].itemCount, 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('filters sale and purchase invoices by product name', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const firstProduct = db.prepare('SELECT id FROM products WHERE code = ?').get('TEST-001');
+    const secondProduct = db.prepare(
+      'INSERT INTO products (code, name, sale_price, purchase_price, stock, minimum_stock) VALUES (?, ?, ?, ?, ?, ?) RETURNING id'
+    ).get('TEST-002', 'کالای ویژه', 100000, 50000, 10, 0);
+    createSale({ invoiceNumber: 'S-PRODUCT-001', items: [{ productId: firstProduct.id, quantity: 1, unitPrice: 100000 }] });
+    createSale({ invoiceNumber: 'S-PRODUCT-002', items: [{ productId: secondProduct.id, quantity: 1, unitPrice: 100000 }] });
+    createPurchase({ invoiceNumber: 'P-PRODUCT-001', items: [{ productId: firstProduct.id, quantity: 1, unitPrice: 50000 }] });
+    createPurchase({ invoiceNumber: 'P-PRODUCT-002', items: [{ productId: secondProduct.id, quantity: 1, unitPrice: 50000 }] });
+
+    assert.deepEqual(listSales({ productQuery: 'ویژه' }).map((row) => row.invoiceNumber), ['S-PRODUCT-002']);
+    assert.deepEqual(listPurchases({ productQuery: 'ویژه' }).map((row) => row.invoiceNumber), ['P-PRODUCT-002']);
+    assert.equal(listSales({ productQuery: 'محصول ناموجود' }).length, 0);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -703,6 +781,23 @@ test('dashboard summary exposes management charts and operational lists', () => 
     assert.ok(Array.isArray(summary.topProducts));
     assert.ok(Array.isArray(summary.topDebtors));
     assert.ok(summary.recentSales.some((row) => row.invoiceNumber === 'S-DASH-001'));
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('dashboard sales trend only includes the current Saturday-to-today week', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    createSale({ invoiceNumber: 'S-TREND-PREVIOUS', date: '2026-09-05', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
+    createSale({ invoiceNumber: 'S-TREND-CURRENT', date: '2026-09-13', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
+
+    const summary = getDashboardSummary({ today: '2026-09-16' });
+    assert.equal(summary.salesTrendStart, '2026-09-12');
+    assert.equal(summary.salesTrendEnd, '2026-09-16');
+    assert.deepEqual(summary.salesTrend.map((row) => row.date), ['2026-09-13']);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

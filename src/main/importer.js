@@ -34,26 +34,55 @@ function parseNumber(value) {
   return Number.isFinite(result) ? result : NaN;
 }
 
+// Decompressed-size cap: an xlsx is a zip, so a malicious file could expand
+// far beyond its on-disk size and exhaust memory while being parsed.
+const MAX_XLSX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
+
 function readZipEntries(filePath) {
   return new Promise((resolve, reject) => {
     yauzl.open(filePath, { lazyEntries: true }, (error, zipFile) => {
       if (error) return reject(error);
       const entries = new Map();
+      let totalBytes = 0;
+      let failed = false;
+      const fail = (streamError) => {
+        if (failed) return;
+        failed = true;
+        zipFile.close();
+        reject(streamError);
+      };
       zipFile.readEntry();
       zipFile.on('entry', (entry) => {
+        if (failed) return;
+        if (/\/$/.test(entry.fileName)) {
+          zipFile.readEntry();
+          return;
+        }
         zipFile.openReadStream(entry, (streamError, stream) => {
-          if (streamError) return reject(streamError);
+          if (failed) return;
+          if (streamError) return fail(streamError);
           const chunks = [];
-          stream.on('data', (chunk) => chunks.push(chunk));
+          stream.on('data', (chunk) => {
+            if (failed) return;
+            totalBytes += chunk.length;
+            if (totalBytes > MAX_XLSX_DECOMPRESSED_BYTES) {
+              fail(new Error('حجم محتوای فایل اکسل از حد مجاز بیشتر است.'));
+              return;
+            }
+            chunks.push(chunk);
+          });
           stream.on('end', () => {
+            if (failed) return;
             entries.set(entry.fileName, Buffer.concat(chunks));
             zipFile.readEntry();
           });
-          stream.on('error', reject);
+          stream.on('error', fail);
         });
       });
-      zipFile.on('end', () => resolve(entries));
-      zipFile.on('error', reject);
+      zipFile.on('end', () => {
+        if (!failed) resolve(entries);
+      });
+      zipFile.on('error', fail);
     });
   });
 }

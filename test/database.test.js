@@ -47,6 +47,7 @@ const {
   listChecks,
   updateCheckStatus,
   changeCurrentUserPassword,
+  userUsesDefaultPassword,
   logoutUser,
   setCurrentUser,
   getProfitLossReport,
@@ -1069,6 +1070,21 @@ test('supports user roles, authentication and audit logging', () => {
     const logs = listAuditLogs({});
     assert.equal(logs.some((log) => log.action === 'auth.login'), true);
     assert.equal(logs.some((log) => log.action === 'user.create'), true);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('flags the seeded admin default password until it is changed', () => {
+  const { directory } = openTestDatabase();
+  try {
+    const firstLogin = loginUser('admin', 'admin123');
+    assert.equal(firstLogin.passwordIsDefault, true);
+    assert.equal(changeCurrentUserPassword('admin123', 'Str0ngPass!'), true);
+    const nextLogin = loginUser('admin', 'Str0ngPass!');
+    assert.equal(nextLogin.passwordIsDefault, false);
+    assert.equal(userUsesDefaultPassword(nextLogin.id), false);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

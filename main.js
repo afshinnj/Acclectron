@@ -83,16 +83,65 @@ const {
   createInstallmentPlan,
   listInstallmentPlans,
   recordInstallmentPayment,
-  changeCurrentUserPassword
+  changeCurrentUserPassword,
+  userUsesDefaultPassword
 } = require('./src/main/database');
 const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
 const { planCommand, applyProductUpdates, undoLastAssistantApply } = require('./src/main/ai/assistant');
+
+// Keep the main process alive on unexpected errors and leave a trace on disk
+// (userData/logs, newest 10 files) so failures can be diagnosed afterwards.
+function appendProcessLog(scope, error) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `main-${new Date().toISOString().slice(0, 10)}.log`);
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${scope}: ${error?.stack || error?.message || String(error)}\n`, 'utf8');
+  } catch {
+    // Logging must never itself crash the app.
+  }
+}
+
+function pruneOldLogs(keep = 10) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    const files = fs.readdirSync(dir)
+      .filter((name) => /^main-\d{4}-\d{2}-\d{2}\.log$/.test(name))
+      .sort()
+      .reverse();
+    for (const name of files.slice(keep)) fs.rmSync(path.join(dir, name), { force: true });
+  } catch {}
+}
+
+process.on('uncaughtException', (error) => appendProcessLog('uncaughtException', error));
+process.on('unhandledRejection', (reason) => appendProcessLog('unhandledRejection', reason));
 
 let mainWindow;
 let isWindowCloseApproved = false;
 let autoBackupTimer;
 const pendingImports = new Map();
 const appIconPath = path.join(__dirname, 'assets', 'icon.png');
+
+// The renderer must never navigate away from the packaged app files: remote or
+// foreign local content would still reach the privileged preload bridge.
+const isAllowedAppUrl = (url) => {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== 'file:') return false;
+    const targetPath = path.normalize(decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:)/, '$1'));
+    const relative = path.relative(__dirname, targetPath);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+};
+
+function hardenWebContents(webContents) {
+  webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedAppUrl(url)) event.preventDefault();
+  });
+}
 
 function registerIpcHandlers() {
   ipcMain.handle('settings:get', () => getAppSettings());
@@ -338,7 +387,16 @@ function registerIpcHandlers() {
     return selection.canceled || !selection.filePaths[0] ? { canceled: true } : { canceled: false, path: selection.filePaths[0] };
   });
   ipcMain.handle('settings:backup-now', async (_event, destination) => {
-    return backupDatabase(destination);
+    // A renderer-supplied path is honored only when it matches the configured
+    // backup folder or Documents; anything else falls back to the configured
+    // folder so a compromised renderer cannot place database copies elsewhere.
+    const configured = String(getAppSettings().backup?.path || '').trim() || app.getPath('documents');
+    const requested = String(destination || '').trim();
+    const target = requested && [configured, app.getPath('documents')]
+      .some((dir) => path.resolve(dir).toLowerCase() === path.resolve(requested).toLowerCase())
+      ? requested
+      : configured;
+    return backupDatabase(target);
   });
   ipcMain.handle('settings:official-start', () => startOfficialUse());
   ipcMain.handle('settings:restore', async () => {
@@ -352,6 +410,11 @@ function registerIpcHandlers() {
     const target = path.join(app.getPath('userData'), 'accletron.db');
     if (path.resolve(source).toLowerCase() === path.resolve(target).toLowerCase()) throw new Error('فایل پشتیبان با دیتابیس فعلی یکسان است.');
     closeDatabase();
+    // Stale journal sidecars of the previous database must not survive a restore.
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      const sidecar = `${target}${suffix}`;
+      if (fs.existsSync(sidecar)) fs.rmSync(sidecar);
+    }
     fs.copyFileSync(source, target);
     getDatabase(app.getPath('userData'));
     return { canceled: false, path: source };
@@ -382,13 +445,17 @@ function registerIpcHandlers() {
       } else if (Date.now() - latest.mtime > interval * 1.5) {
         result.alerts.push({ id: 'backup-stale', type: 'backup-stale', severity: 'warning', title: 'پشتیبان‌گیری قدیمی است', message: `آخرین پشتیبان در ${new Date(latest.mtime).toLocaleString('fa-IR')} ایجاد شده است.`, actionPage: 'settings' });
       }
-      result.counts = {
-        total: result.alerts.length,
-        danger: result.alerts.filter((item) => item.severity === 'danger').length,
-        warning: result.alerts.filter((item) => item.severity === 'warning').length,
-        info: result.alerts.filter((item) => item.severity === 'info').length
-      };
     }
+    const currentUser = getCurrentUser();
+    if (currentUser && userUsesDefaultPassword(currentUser.id)) {
+      result.alerts.push({ id: 'default-password', type: 'default-password', severity: 'danger', title: 'رمز عبور پیش‌فرض', message: 'کاربر admin هنوز از رمز عبور پیش‌فرض (admin123) استفاده می‌کند؛ لطفاً از صفحه کاربران آن را تغییر دهید.', actionPage: 'users' });
+    }
+    result.counts = {
+      total: result.alerts.length,
+      danger: result.alerts.filter((item) => item.severity === 'danger').length,
+      warning: result.alerts.filter((item) => item.severity === 'warning').length,
+      info: result.alerts.filter((item) => item.severity === 'info').length
+    };
     return result;
   });
   ipcMain.handle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
@@ -587,9 +654,22 @@ const createWindow = () => {
     }
   });
 
+  hardenWebContents(mainWindow.webContents);
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    appendProcessLog('render-process-gone', new Error(`${details.reason} (exitCode=${details.exitCode})`));
+    // Bring the UI back instead of leaving a dead window; unsaved in-form
+    // state is lost either way.
+    if (details.reason !== 'clean-exit' && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+  });
   mainWindow.loadFile('index.html');
   mainWindow.on('close', (event) => {
     if (isWindowCloseApproved) return;
+    // A crashed renderer can never confirm the close flow; without this the
+    // window would deadlock and only Task Manager could end the process.
+    if (mainWindow.webContents.isCrashed()) {
+      isWindowCloseApproved = true;
+      return;
+    }
     event.preventDefault();
     mainWindow.webContents.send('window:close-requested');
   });
@@ -599,12 +679,25 @@ const createWindow = () => {
   });
 };
 
+// A second instance would write to the same SQLite file concurrently; hand
+// focus back to the running window instead of opening a second one.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(() => {
   getDatabase(app.getPath('userData'));
   registerIpcHandlers();
   createWindow();
   runAutoBackupIfDue();
   autoBackupTimer = setInterval(runAutoBackupIfDue, 60 * 1000);
+  pruneOldLogs();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

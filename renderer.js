@@ -25,8 +25,9 @@ document.addEventListener('click', async (event) => {
   const error = $('#loginError');
   error?.classList.add('hidden');
   try {
-    await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
+    const session = await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
     $('#loginBackdrop')?.classList.add('hidden');
+    warnDefaultPassword(session);
   } catch (e) {
     if (error) {
       error.textContent = String(e?.message || 'ورود ناموفق بود.');
@@ -218,6 +219,11 @@ function showToast(message, error = false) {
   clearTimeout(toastTimer);
   toast.classList.remove('hidden');
   toastTimer = setTimeout(() => toast.classList.add('hidden'), error ? 5200 : 3200);
+}
+
+function warnDefaultPassword(session) {
+  if (!session?.passwordIsDefault) return;
+  showToast('رمز عبور کاربر admin هنوز پیش‌فرض (admin123) است؛ از صفحه «کاربران و لاگ» آن را تغییر دهید.', true);
 }
 
 let confirmDialogResolver = null;
@@ -512,7 +518,7 @@ function renderDashboard(summary) {
 function renderResults() {
   const box = $('#productResults');
   if (!state.products.length) { box.classList.add('hidden'); return; }
-  box.innerHTML = state.products.map((product) => `<button class="result-item" data-id="${product.id}"><span>${product.name}<small>${product.code} · موجودی ${product.stock}</small></span><b>${money(product.salePrice)}</b></button>`).join('');
+  box.innerHTML = state.products.map((product) => `<button class="result-item" data-id="${product.id}"><span>${esc(product.name)}<small>${esc(product.code)} · موجودی ${product.stock}</small></span><b>${money(product.salePrice)}</b></button>`).join('');
   box.classList.remove('hidden');
   box.querySelectorAll('.result-item').forEach((button) => button.addEventListener('click', () => addProduct(Number(button.dataset.id))));
 }
@@ -520,7 +526,7 @@ function renderResults() {
 function renderItems() {
   const body = $('#saleItems');
   if (!state.items.length) { body.innerHTML = '<tr class="empty-row"><td colspan="6">برای شروع، کالا را جستجو و انتخاب کنید.</td></tr>'; return; }
-  body.innerHTML = state.items.map((item, index) => `<tr><td><strong>${item.name}</strong><small>${item.code} · موجودی ${item.stock}</small></td><td><input class="line-quantity" data-index="${index}" type="number" min="0.01" step="0.01" value="${item.quantity}" /></td><td>${money(item.unitPrice)}</td><td><input class="line-discount" data-index="${index}" type="number" min="0" value="${formatPriceInput(item.discount)}" /></td><td>${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-index="${index}" title="حذف">×</button></td></tr>`).join('');
+  body.innerHTML = state.items.map((item, index) => `<tr><td><strong>${esc(item.name)}</strong><small>${esc(item.code)} · موجودی ${item.stock}</small></td><td><input class="line-quantity" data-index="${index}" type="number" min="0.01" step="0.01" value="${item.quantity}" /></td><td>${money(item.unitPrice)}</td><td><input class="line-discount" data-index="${index}" type="number" min="0" value="${formatPriceInput(item.discount)}" /></td><td>${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-index="${index}" title="حذف">×</button></td></tr>`).join('');
   body.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => { const item = state.items[Number(input.dataset.index)]; if (input.classList.contains('line-quantity')) item.quantity = number(input.value); else item.discount = parsePriceInput(input.value); updateSummary(); }));
   body.querySelectorAll('.delete-line').forEach((button) => button.addEventListener('click', () => { state.items.splice(Number(button.dataset.index), 1); renderItems(); updateSummary(); }));
 }
@@ -4086,9 +4092,10 @@ function installLoginSubmitGuard() {
     const backdrop = $('#loginBackdrop');
     error?.classList.add('hidden');
     try {
-      await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
+      const session = await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
       backdrop?.classList.add('hidden');
       showToast('ورود موفق بود.');
+      warnDefaultPassword(session);
     } catch (e) {
       if (error) {
         error.textContent = readableError(e, 'ورود ناموفق بود.');

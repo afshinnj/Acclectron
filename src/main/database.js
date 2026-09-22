@@ -52,6 +52,9 @@ function getDatabase(userDataPath) {
   database = normalizeDatabaseRows(new DatabaseSync(path.join(dataDirectory, 'accletron.db')));
   database.exec(`
     PRAGMA foreign_keys = ON;
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY,
       code TEXT NOT NULL UNIQUE,
@@ -624,7 +627,7 @@ function loginUser(username, password) {
   currentUserId = Number(user.id);
   db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
   auditLog('auth.login', 'user', user.id);
-  return getCurrentUser();
+  return { ...getCurrentUser(), passwordIsDefault: !passwordless && userUsesDefaultPassword(user.id) };
 }
 
 function resetAdminPassword() {
@@ -636,6 +639,17 @@ function resetAdminPassword() {
     .run(passwordHash, passwordSalt, admin.id);
   auditLog('auth.admin_password_reset', 'user', admin.id);
   return true;
+}
+
+// Only the seeded admin account ships with a known default password; other
+// users set theirs at creation time. Used to nudge admins into changing it.
+function userUsesDefaultPassword(userId) {
+  const row = requireDatabase().prepare('SELECT username, password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE id = ? AND is_active = 1').get(Number(userId));
+  if (!row || row.username !== 'admin') return false;
+  const { passwordHash } = hashPassword('admin123', row.passwordSalt);
+  const computed = Buffer.from(passwordHash, 'hex');
+  const stored = Buffer.from(row.passwordHash, 'hex');
+  return computed.length === stored.length && crypto.timingSafeEqual(computed, stored);
 }
 
 function logoutUser() {
@@ -860,7 +874,9 @@ function changeCurrentUserPassword(currentPassword, newPassword) {
   const db = requireDatabase();
   const existing = db.prepare('SELECT password_hash AS passwordHash, password_salt AS passwordSalt FROM users WHERE id = ?').get(user.id);
   const oldHash = hashPassword(currentPassword, existing.passwordSalt).passwordHash;
-  if (oldHash !== existing.passwordHash) throw new Error('رمز عبور فعلی نادرست است.');
+  const computed = Buffer.from(oldHash, 'hex');
+  const stored = Buffer.from(existing.passwordHash, 'hex');
+  if (computed.length !== stored.length || !crypto.timingSafeEqual(computed, stored)) throw new Error('رمز عبور فعلی نادرست است.');
   const next = hashPassword(newPassword);
   db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(next.passwordHash, next.passwordSalt, user.id);
@@ -3472,6 +3488,7 @@ module.exports = {
   setUserActive,
   loginUser,
   resetAdminPassword,
+  userUsesDefaultPassword,
   logoutUser,
   listAuditLogs,
   listChecks,

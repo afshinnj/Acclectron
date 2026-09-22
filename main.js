@@ -86,7 +86,7 @@ const {
   changeCurrentUserPassword
 } = require('./src/main/database');
 const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
-const { planCommand, applyProductUpdates } = require('./src/main/ai/assistant');
+const { planCommand, applyProductUpdates, undoLastAssistantApply } = require('./src/main/ai/assistant');
 
 let mainWindow;
 let isWindowCloseApproved = false;
@@ -223,8 +223,13 @@ function registerIpcHandlers() {
       return { available: false, results: [], reason: String(error?.message || error) };
     }
   });
-  ipcMain.handle('ai:assistant-plan', async (_event, payload = {}) => planCommand(String(payload.text || ''), aiModelRoots));
+  ipcMain.handle('ai:assistant-plan', async (_event, payload = {}) => planCommand(
+    String(payload.text || ''),
+    aiModelRoots,
+    Array.isArray(payload.previousIds) ? payload.previousIds : []
+  ));
   ipcMain.handle('ai:assistant-apply', (_event, payload = {}) => applyProductUpdates(payload.updates || []));
+  ipcMain.handle('ai:assistant-undo', () => undoLastAssistantApply());
   ipcMain.handle('ai:assistant-export', async (_event, payload = {}) => {
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'خروجی CSV دستیار هوشمند',
@@ -235,6 +240,29 @@ function registerIpcHandlers() {
     const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     fs.writeFileSync(selection.filePath, '\uFEFF' + rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
+    return { canceled: false, filePath: selection.filePath };
+  });
+  const escapeAssistantHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  ipcMain.handle('ai:assistant-export-pdf', async (_event, payload = {}) => {
+    const rows = Array.isArray(payload.rows) ? payload.rows.filter(Array.isArray) : [];
+    if (rows.length < 2) throw new Error('داده‌ای برای خروجی PDF وجود ندارد.');
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: 'خروجی PDF دستیار هوشمند',
+      defaultPath: String(payload.fileName || `دستیار-هوشمند-${new Date().toISOString().slice(0, 10)}`).replace(/\.pdf$/i, '') + '.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (selection.canceled || !selection.filePath) return { canceled: true };
+    const [header, ...bodyRows] = rows;
+    const html = `<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8"><style>body{font-family:Tahoma,'Segoe UI',sans-serif;font-size:10px;padding:14px}h3{font-size:13px;margin:0 0 10px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #999;padding:5px 6px;text-align:right}th{background:#eef2f6}</style></head><body><h3>Acclectron — دستیار هوشمند</h3><table><thead><tr>${header.map((cell) => `<th>${escapeAssistantHtml(cell)}</th>`).join('')}</tr></thead><tbody>${bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${escapeAssistantHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+    const pdfWindow = new BrowserWindow({ show: false });
+    try {
+      await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      const data = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4', landscape: true, margins: { marginType: 'none' } });
+      fs.writeFileSync(selection.filePath, data);
+    } finally {
+      pdfWindow.destroy();
+    }
     return { canceled: false, filePath: selection.filePath };
   });
   ipcMain.handle('products:list', (_event, payload = {}) => listProducts(payload.query, payload.categoryId));
@@ -460,15 +488,43 @@ function registerIpcHandlers() {
     mainWindow?.close();
   });
   ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
+  ipcMain.handle('window:set-overlay', (_event, payload = {}) => {
+    if (process.platform !== 'win32' || typeof mainWindow?.setTitleBarOverlay !== 'function') return false;
+    try {
+      mainWindow.setTitleBarOverlay({
+        color: String(payload.color || '#111b2b'),
+        symbolColor: String(payload.symbolColor || '#dbe7f5'),
+        height: 42
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function backupDatabase(destination) {
   const targetDir = String(destination || '').trim() || app.getPath('documents');
   fs.mkdirSync(targetDir, { recursive: true });
-  const source = path.join(app.getPath('userData'), 'accletron.db');
   const file = path.join(targetDir, `accletron-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
-  fs.copyFileSync(source, file);
+  // VACUUM INTO snapshots a consistent copy of the live database; a plain file
+  // copy could catch a half-written WAL page and produce a corrupt backup.
+  getDatabase(app.getPath('userData')).prepare('VACUUM INTO ?').run(file);
+  pruneOldBackups(targetDir);
   return { path: file };
+}
+
+function pruneOldBackups(targetDir, keep = 14) {
+  try {
+    const files = fs.readdirSync(targetDir)
+      .filter((name) => /^accletron-backup-.*\.db$/i.test(name))
+      .map((name) => path.join(targetDir, name))
+      .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const entry of files.slice(keep)) fs.rmSync(entry.file, { force: true });
+  } catch {
+    // Cleanup must never fail the backup itself.
+  }
 }
 
 function startOfficialUse() {
@@ -515,8 +571,12 @@ const createWindow = () => {
     minWidth: 980,
     minHeight: 640,
     show: false,
-    frame: false,
     titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#111b2b',
+      symbolColor: '#dbe7f5',
+      height: 42
+    },
     backgroundColor: '#111827',
     icon: appIconPath,
     webPreferences: {

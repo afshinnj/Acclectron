@@ -57,6 +57,13 @@ function applyAppearanceSettings(appearance = {}) {
   uiNotifications = appearance.notifications !== false;
   uiShortcuts = appearance.shortcuts !== false;
   document.documentElement.dataset.theme = resolvedTheme;
+  // Keep the native Windows 11 caption buttons in sync with the active theme.
+  const overlayColors = {
+    dark: { color: '#111b2b', symbolColor: '#dbe7f5' },
+    light: { color: '#ffffff', symbolColor: '#3b4a5f' },
+    hacker: { color: '#04120a', symbolColor: '#d6ffe3' }
+  };
+  window.api?.window?.setOverlay?.(overlayColors[resolvedTheme] || overlayColors.dark)?.catch?.(() => {});
   const scale = Math.max(80, Math.min(130, Number(appearance.fontScale || 100))) / 100;
   document.documentElement.style.setProperty('--font-scale', String(scale));
   document.documentElement.style.zoom = String(scale);
@@ -114,6 +121,7 @@ function refreshDailySaleCurrencyLabels() {
   if (total) total.textContent = `مبلغ کل (${unit})`;
 }
 async function refreshCurrencyDisplays() {
+  renderDashboardSkeleton();
   try { const summary = await window.api.dashboard.summary(); renderMetrics(summary); renderDashboard(summary); } catch {}
   refreshDailySaleCurrencyLabels();
   if (saleState?.products?.length) renderSaleProducts();
@@ -140,16 +148,76 @@ const normalizeSearchText = (value) => String(value ?? '')
   .replace(/[\u06F0-\u06F9]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
   .replace(/[\u0660-\u0669]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
   .toLowerCase();
+
+// ── Inline SVG icon set (Fluent-style line icons, theme-aware via currentColor) ──
+const svgIcon = (paths) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const NAV_ICONS = {
+  dashboard: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
+  sales: '<path d="M12 5v14M5 12h14"/>',
+  'sales-invoice': '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 13h5M9.5 17h5"/>',
+  purchases: '<path d="M12 3v11M7.5 10 12 14.5 16.5 10"/><path d="M5 20h14"/>',
+  'sales-invoices': '<path d="M8 3h8l4 4v13a1 1 0 0 1-1 1H8z"/><path d="M16 3v4h4"/><path d="M4 7v13h4"/>',
+  'purchase-invoices': '<path d="M8 3h8l4 4v13a1 1 0 0 1-1 1H8z"/><path d="M16 3v4h4"/><path d="M4 7v13h4"/><path d="M11 12l2 2 3.5-3.5"/>',
+  products: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
+  categories: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  customers: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/>',
+  ledger: '<path d="M8.5 6H20M8.5 12H20M8.5 18H20"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+  inventory: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  returns: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12H8"/>',
+  checks: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  installments: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  cash: '<rect x="3" y="7" width="18" height="10" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6.5 12h.01M17.5 12h.01"/>',
+  'profit-loss': '<path d="m3 17 6-6 4 4 8-8"/><path d="M14.5 7H21v6.5"/>',
+  users: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19c1-3 3-4.5 5.5-4.5s4.5 1.5 5.5 4.5"/><path d="M15.5 5.4a3 3 0 0 1 0 5.7M16.5 14.8c1.9.7 3.3 2.1 4 4.2"/>',
+  reports: '<path d="M5 20v-6M11 20V6M17 20v-9"/><path d="M3 20h18"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.8 4.8l2.1 2.1M17.1 17.1l2.1 2.1M2.5 12h3M18.5 12h3M4.8 19.2 6.9 17M17.1 6.9l2.1-2.1"/>',
+  assistant: '<path d="M11 4l1.6 4.7L17.3 10l-4.7 1.6L11 16.4 9.4 11.6 4.7 10l4.7-1.3z"/><path d="M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  bell: '<path d="M6 9.5a6 6 0 0 1 12 0c0 4.8 2 6 2 6H4s2-1.2 2-6"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/>'
+};
+
+function applySvgIcons() {
+  document.querySelectorAll('.nav-item[data-page]').forEach((button) => {
+    const paths = NAV_ICONS[button.dataset.page];
+    const holder = button.querySelector('span');
+    if (!paths || !holder || holder.dataset.svgIcon === '1') return;
+    holder.innerHTML = svgIcon(paths);
+    holder.dataset.svgIcon = '1';
+  });
+  document.querySelectorAll('.icon-button[data-page]').forEach((button) => {
+    const paths = NAV_ICONS[button.dataset.page];
+    if (!paths || button.dataset.svgIcon === '1') return;
+    button.innerHTML = svgIcon(paths);
+    button.dataset.svgIcon = '1';
+  });
+  document.querySelectorAll('.invoice-menu-toggle, .product-menu-toggle, .sidebar-menu-toggle').forEach((button) => {
+    const holder = button.querySelector('span');
+    if (!holder || holder.dataset.svgIcon === '1') return;
+    holder.innerHTML = svgIcon(button.classList.contains('product-menu-toggle') || button.classList.contains('sidebar-menu-toggle') ? NAV_ICONS.products : NAV_ICONS['sales-invoices']);
+    holder.dataset.svgIcon = '1';
+  });
+  const bell = $('#notificationButton');
+  if (bell && bell.dataset.svgIcon !== '1') {
+    const badge = bell.querySelector('#notificationBadge');
+    bell.innerHTML = svgIcon(NAV_ICONS.bell) + (badge ? badge.outerHTML : '<span id="notificationBadge" class="notification-badge hidden">۰</span>');
+    bell.dataset.svgIcon = '1';
+  }
+}
+applySvgIcons();
+document.addEventListener('DOMContentLoaded', applySvgIcons);
+window.addEventListener('load', applySvgIcons);
+setTimeout(applySvgIcons, 600);
 const number = (value) => Number(normalizeDigits(value).replace(/[^\d.]/g, '')) || 0;
 
+let toastTimer;
 function showToast(message, error = false) {
   if (!uiNotifications) return;
   const toast = $('#toast');
-  toast.textContent = message;
+  toast.innerHTML = `<span class="toast-icon" aria-hidden="true">${error ? '✕' : '✓'}</span><span>${esc(message)}</span>`;
   toast.style.background = error ? '#4b252f' : '#163c34';
   toast.style.color = error ? '#ffb0b2' : '#8af1c6';
+  clearTimeout(toastTimer);
   toast.classList.remove('hidden');
-  setTimeout(() => toast.classList.add('hidden'), 3000);
+  toastTimer = setTimeout(() => toast.classList.add('hidden'), error ? 5200 : 3200);
 }
 
 let confirmDialogResolver = null;
@@ -281,18 +349,36 @@ function initializeDashboardMarkup() {
   if (!page || page.dataset.redesigned === '1') return;
   page.dataset.redesigned = '1';
   page.innerHTML = `
-    <div class="dashboard-heading"><div><span class="eyebrow">مرکز کنترل مدیریتی</span><h2>وضعیت کسب‌وکار در یک نگاه</h2><p>آخرین اطلاعات فروشگاه، دریافت‌ها و هشدارهای عملیاتی</p></div><div class="dashboard-actions"><button id="refreshDashboard" class="secondary">به‌روزرسانی</button><button class="primary" data-page="sales">ثبت فروش جدید <span>F9</span></button></div></div>
+    <div class="dashboard-heading"><div class="dashboard-heading-copy"><span class="eyebrow">مرکز کنترل مدیریتی</span><h2 id="dashboardGreeting">وضعیت کسب‌وکار در یک نگاه</h2><p>آخرین اطلاعات فروشگاه، دریافت‌ها و هشدارهای عملیاتی</p><div class="dashboard-chips"><span class="dashboard-chip hidden" id="dashboardUserChip"></span><span class="dashboard-chip" id="dashboardBackupChip"><b>وضعیت پشتیبان‌گیری…</b></span><span class="dashboard-chip" id="dashboardDateChip"></span></div></div><svg class="dashboard-motif" viewBox="0 0 140 90" aria-hidden="true"><path d="M6 76 L38 52 L64 60 L94 28 L134 12" class="motif-line"/><path d="M6 76 L38 52 L64 60 L94 28 L134 12 L134 88 L6 88 Z" class="motif-area"/><circle cx="94" cy="28" r="3.5" class="motif-dot"/><circle cx="38" cy="52" r="3" class="motif-dot"/></svg><div class="dashboard-actions"><button id="refreshDashboard" class="secondary">به‌روزرسانی</button><button class="primary" data-page="sales">ثبت فروش جدید <span>F9</span></button></div></div>
     <div class="dashboard-kpis">
-      <article class="dashboard-kpi blue"><span>فروش امروز</span><strong id="todaySales">۰ تومان</strong><small id="todayCount">۰ فاکتور</small><em id="todaySalesChange" class="dashboard-kpi-trend">—</em></article><article class="dashboard-kpi purple"><span>فروش ماه جاری</span><strong id="monthSales">۰ تومان</strong><small>مجموع فروش فعال</small></article><article class="dashboard-kpi green"><span>سود ماه جاری</span><strong id="dashboardProfit">۰ تومان</strong><small id="dashboardMargin">حاشیه سود: ۰٪</small></article><article class="dashboard-kpi orange"><span>مطالبات باز</span><strong id="dashboardReceivables">۰ تومان</strong><small>فاکتورهای تسویه‌نشده</small></article><article class="dashboard-kpi cyan"><span>موجودی کالا</span><strong id="inventory">۰ عدد</strong><small id="productCount">۰ کالا</small></article><article class="dashboard-kpi red"><span>نیازمند بررسی</span><strong id="lowStock">۰ کالا</strong><small>موجودی کم</small></article>
+      <article class="dashboard-kpi blue"><span>فروش امروز</span><strong id="todaySales">۰ تومان</strong><small id="todayCount">۰ فاکتور</small><em id="todaySalesChange" class="dashboard-kpi-trend">—</em><i id="kpiSalesSpark" class="kpi-spark-holder" aria-hidden="true"></i></article><article class="dashboard-kpi purple"><span>فروش ماه جاری</span><strong id="monthSales">۰ تومان</strong><small>مجموع فروش فعال</small></article><article class="dashboard-kpi green"><span>سود ماه جاری</span><strong id="dashboardProfit">۰ تومان</strong><small id="dashboardMargin">حاشیه سود: ۰٪</small><i id="kpiProfitSpark" class="kpi-spark-holder" aria-hidden="true"></i></article><article class="dashboard-kpi orange"><span>مطالبات باز</span><strong id="dashboardReceivables">۰ تومان</strong><small>فاکتورهای تسویه‌نشده</small></article><article class="dashboard-kpi cyan"><span>موجودی کالا</span><strong id="inventory">۰ عدد</strong><small id="productCount">۰ کالا</small></article><article class="dashboard-kpi red"><span>نیازمند بررسی</span><strong id="lowStock">۰ کالا</strong><small>موجودی کم</small></article>
     </div>
     <div class="dashboard-value-strip"><div><span>ارزش خرید موجودی</span><strong id="dashboardInventoryPurchase">۰ تومان</strong></div><div><span>ارزش فروش موجودی</span><strong id="dashboardInventoryRetail">۰ تومان</strong></div><div><span>جریان نقدی ماه</span><strong id="dashboardCashFlow">۰ تومان</strong></div></div>
     <div class="dashboard-alert-strip"><div><strong>هشدارهای فوری</strong><small id="dashboardAlertHint">در حال بررسی...</small></div><button id="dashboardAlertsButton" class="secondary">مشاهده اعلان‌ها</button></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small id="dashboardSalesTrendRange">هفته جاری</small></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش بر اساس دسته‌بندی</h3><small>ماه جاری</small></div><div id="dashboardCategoryChart" class="dashboard-bars"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>وضعیت نقدینگی ماه</h3><small>دریافت و هزینه</small></div><div id="dashboardCashChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>`;
-  $('#refreshDashboard').onclick = () => window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true));
+  $('#refreshDashboard').onclick = () => { renderDashboardSkeleton(); window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true)); };
   $('#dashboardAlertsButton').onclick = () => $('#notificationButton')?.click();
 }
+
+function renderDashboardSkeleton() {
+  initializeDashboardMarkup();
+  ['#dashboardSalesChart', '#dashboardPaymentsChart', '#dashboardCategoryChart', '#dashboardCashChart'].forEach((id) => { const node = $(id); if (node) node.innerHTML = '<div class="skeleton chart-skeleton"></div>'; });
+  ['#dashboardRecentSales', '#dashboardDebtors', '#dashboardProducts'].forEach((id) => { const node = $(id); if (node) node.innerHTML = '<div class="skeleton row-skeleton"></div>'.repeat(4); });
+  ['#kpiSalesSpark', '#kpiProfitSpark'].forEach((id) => { const node = $(id); if (node) node.innerHTML = ''; });
+}
+
+function sparklineSvg(values) {
+  if (!values || values.length < 2) return '';
+  const width = 110; const height = 30;
+  const max = Math.max(1, ...values);
+  const x = (index) => width - (index * (width / (values.length - 1)));
+  const y = (value) => height - 3 - (Number(value || 0) / max) * (height - 6);
+  const points = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
 function renderDashboard(summary) {
   initializeDashboardMarkup();
   const trend = summary.salesTrend || [];
@@ -310,7 +396,22 @@ function renderDashboard(summary) {
   $('#dashboardInventoryRetail').textContent = money(summary.inventoryValue?.retail || 0);
   const cashFlow = Number(summary.cashMonth?.income || 0) - Number(summary.cashMonth?.expense || 0);
   $('#dashboardCashFlow').textContent = money(cashFlow);
-  window.api.notifications?.list({ daysAhead: 7 }).then((data) => { $('#dashboardAlertHint').textContent = data.counts?.total ? `${data.counts.total} مورد برای بررسی وجود دارد.` : 'مورد فوری وجود ندارد.'; }).catch(() => {});
+  Promise.all([
+    window.api.notifications?.list({ daysAhead: 7 }).catch(() => null),
+    window.api.settings.get().catch(() => null)
+  ]).then(([notifications, settings]) => {
+    $('#dashboardAlertHint').textContent = notifications?.counts?.total ? `${notifications.counts.total} مورد برای بررسی وجود دارد.` : 'مورد فوری وجود ندارد.';
+    const chip = $('#dashboardBackupChip');
+    if (!chip) return;
+    const alerts = notifications?.alerts || [];
+    const missing = alerts.find((alert) => alert.type === 'backup-missing');
+    const stale = alerts.find((alert) => alert.type === 'backup-stale');
+    const auto = settings?.backup?.auto;
+    const kind = missing ? 'danger' : stale ? 'warning' : auto ? 'success' : 'muted';
+    const label = missing ? 'پشتیبان‌گیری انجام نشده' : stale ? 'پشتیبان‌گیری قدیمی است' : auto ? 'پشتیبان‌گیری به‌روز است' : 'پشتیبان‌گیری خودکار خاموش است';
+    chip.className = `dashboard-chip ${kind}`;
+    chip.innerHTML = `<i aria-hidden="true"></i><b>${esc(label)}</b>`;
+  }).catch(() => {});
   const weekdayNames = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'];
   const toPersianDigits = (value) => String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
   const trendByDate = new Map(trend.map((row) => [String(row.date).slice(0, 10), row]));
@@ -329,18 +430,72 @@ function renderDashboard(summary) {
   }
   $('#dashboardSalesTrendRange').textContent = 'هفته جاری؛ شنبه تا امروز';
   const chartRows = weekDates.map((date) => ({ date, sales: 0, profit: 0, ...(trendByDate.get(date) || {}) }));
-  const max = Math.max(1, ...chartRows.map((row) => Number(row.sales || 0)));
-  $('#dashboardSalesChart').innerHTML = `<div class="dashboard-chart-bars">${chartRows.map((row) => {
-    const dateObj = new Date(`${row.date}T00:00:00Z`);
+  const compactMoney = (cents) => {
+    const value = (Number(cents || 0) / 100) * currencyFactor();
+    if (value >= 1e9) return `${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(value / 1e9)} میلیارد`;
+    if (value >= 1e6) return `${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(value / 1e6)} میلیون`;
+    return new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(value);
+  };
+  const roleLabels = { admin: 'مدیر سیستم', manager: 'مدیر اجرایی', cashier: 'صندوقدار', warehouse: 'انباردار', viewer: 'فقط‌خواندنی' };
+  window.api.auth?.current?.().then((user) => {
+    const chip = $('#dashboardUserChip');
+    if (!chip) return;
+    if (!user) { chip.classList.add('hidden'); return; }
+    chip.classList.remove('hidden');
+    chip.innerHTML = `<b>${esc(user.displayName || user.username)}</b><small>${esc(roleLabels[user.role] || user.role || '')}</small>`;
+    const greeting = $('#dashboardGreeting');
+    if (greeting) greeting.textContent = `خوش آمدید، ${user.displayName || user.username}`;
+  }).catch(() => {});
+  const dateChip = $('#dashboardDateChip');
+  if (dateChip) dateChip.innerHTML = `<b>${esc(isoToJalali(anchorDate))}</b><small>${esc(weekdayNames[(new Date(`${anchorDate}T00:00:00Z`).getUTCDay() + 1) % 7])}</small>`;
+  const sparkValues = chartRows.map((row) => Number(row.sales || 0));
+  const profitValues = chartRows.map((row) => Number(row.profit || 0));
+  const salesSpark = $('#kpiSalesSpark');
+  if (salesSpark) salesSpark.innerHTML = sparklineSvg(sparkValues);
+  const profitSpark = $('#kpiProfitSpark');
+  if (profitSpark) profitSpark.innerHTML = sparklineSvg(profitValues);
+  const chartW = 640; const chartH = 230; const padX = 34; const padTop = 16; const padBottom = 30;
+  const innerW = chartW - padX * 2; const innerH = chartH - padTop - padBottom;
+  const maxVal = Math.max(1, ...sparkValues, ...profitValues);
+  const pointX = (index) => chartW - padX - (sparkValues.length === 1 ? innerW / 2 : index * (innerW / (sparkValues.length - 1)));
+  const pointY = (value) => padTop + innerH - (Number(value || 0) / maxVal) * innerH;
+  const linePath = (values) => values.map((value, index) => `${index ? 'L' : 'M'}${pointX(index).toFixed(1)} ${pointY(value).toFixed(1)}`).join(' ');
+  const areaPath = `${linePath(sparkValues)} L${pointX(sparkValues.length - 1).toFixed(1)} ${(padTop + innerH).toFixed(1)} L${pointX(0).toFixed(1)} ${(padTop + innerH).toFixed(1)} Z`;
+  const dayLabels = chartRows.map((row, index) => {
+    const dayName = weekdayNames[(new Date(`${row.date}T00:00:00Z`).getUTCDay() + 1) % 7];
+    return `<text x="${pointX(index).toFixed(1)}" y="${chartH - 8}" text-anchor="middle" class="trend-axis-text">${esc(dayName)}</text>`;
+  }).join('');
+  const gridLines = [0.25, 0.5, 0.75, 1].map((fraction) => {
+    const gy = (padTop + innerH - innerH * fraction).toFixed(1);
+    return `<line x1="${padX}" x2="${chartW - padX}" y1="${gy}" y2="${gy}" class="trend-grid"/>`;
+  }).join('');
+  const trendPoints = chartRows.map((row, index) => {
     const [gy, gm, gd] = row.date.split('-').map(Number);
     const jalaliDate = toPersianDigits(gregorianToJalali(gy, gm, gd).join('/'));
-    const dayName = weekdayNames[(dateObj.getUTCDay() + 1) % 7];
-    return `<div class="dashboard-chart-column"><div class="dashboard-chart-values"><i style="height:${Math.max(4, Number(row.sales || 0) / max * 100)}%" title="فروش ${money(row.sales)}"></i><b style="height:${Math.max(3, Math.abs(Number(row.profit || 0)) / max * 100)}%" title="سود ${money(row.profit)}"></b></div><small title="${esc(`${dayName} ${jalaliDate}`)}"><span>${esc(dayName)}</span><span>${esc(jalaliDate)}</span></small></div>`;
-  }).join('')}</div><div class="chart-legend"><span><i class="legend-sales"></i>فروش</span><span><i class="legend-profit"></i>سود</span></div>`;
+    const dayName = weekdayNames[(new Date(`${row.date}T00:00:00Z`).getUTCDay() + 1) % 7];
+    return `<g class="trend-point"><title>${esc(`${dayName} ${jalaliDate} — فروش ${money(row.sales)} · سود ${money(row.profit)}`)}</title><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.sales).toFixed(1)}" r="3.4" class="trend-dot-sales"/><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.profit).toFixed(1)}" r="2.6" class="trend-dot-profit"/></g>`;
+  }).join('');
+  $('#dashboardSalesChart').innerHTML = `<svg class="trend-chart" viewBox="0 0 ${chartW} ${chartH}" aria-hidden="true">${gridLines}<path d="${areaPath}" class="trend-area"/><path d="${linePath(sparkValues)}" class="trend-sales"/><path d="${linePath(profitValues)}" class="trend-profit"/><text x="${padX - 6}" y="${(padTop + 4).toFixed(1)}" text-anchor="end" class="trend-axis-text">${esc(compactMoney(maxVal))}</text>${dayLabels}${trendPoints}</svg><div class="chart-legend"><span><i class="legend-sales"></i>فروش</span><span><i class="legend-profit"></i>سود</span></div>`;
   const paymentLabels = { cash: 'نقدی', card: 'کارت', check: 'چک', credit: 'اعتباری' };
+  const donutPalette = ['var(--accent)', '#a78bfa', '#f59e0b', '#34d399', '#f87171'];
   const payments = summary.paymentBreakdown || [];
-  const paymentMax = Math.max(1, ...payments.map((row) => Number(row.amount || 0)));
-  $('#dashboardPaymentsChart').innerHTML = payments.length ? payments.map((row) => `<div class="dashboard-bar-row"><span>${paymentLabels[row.method] || esc(row.method)}</span><div><i style="width:${Number(row.amount || 0) / paymentMax * 100}%"></i></div><b>${money(row.amount)}</b></div>`).join('') : '<div class="empty-state compact">پرداختی برای این ماه ثبت نشده است.</div>';
+  const paymentTotal = payments.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  if (payments.length && paymentTotal > 0) {
+    const radius = 52; const circumference = 2 * Math.PI * radius;
+    let dashOffset = 0;
+    const segments = payments.map((row, index) => {
+      const fraction = Number(row.amount || 0) / paymentTotal;
+      const dash = fraction * circumference;
+      const color = donutPalette[index % donutPalette.length];
+      const segment = `<circle cx="70" cy="70" r="${radius}" fill="none" stroke="${color}" stroke-width="15" stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}" stroke-dashoffset="${(-dashOffset).toFixed(2)}" transform="rotate(-90 70 70)"><title>${esc(`${paymentLabels[row.method] || row.method}: ${money(row.amount)}`)}</title></circle>`;
+      dashOffset += dash;
+      return segment;
+    }).join('');
+    const legend = payments.map((row, index) => `<div class="donut-legend-row"><i style="background:${donutPalette[index % donutPalette.length]}"></i><span>${paymentLabels[row.method] || esc(row.method)}</span><b>${money(row.amount)}</b><small>${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(Number(row.amount || 0) / paymentTotal * 100)}٪</small></div>`).join('');
+    $('#dashboardPaymentsChart').innerHTML = `<div class="donut-wrap"><svg class="donut" viewBox="0 0 140 140" role="img">${segments}<text x="70" y="66" text-anchor="middle" class="donut-total">${esc(compactMoney(paymentTotal))}</text><text x="70" y="84" text-anchor="middle" class="donut-caption">دریافت ماه</text></svg><div class="donut-legend">${legend}</div></div>`;
+  } else {
+    $('#dashboardPaymentsChart').innerHTML = '<div class="empty-state compact">پرداختی برای این ماه ثبت نشده است.</div>';
+  }
   const categoryRows = summary.categorySales || [];
   const categoryMax = Math.max(1, ...categoryRows.map((row) => Number(row.netSales || 0)));
   $('#dashboardCategoryChart').innerHTML = categoryRows.length ? categoryRows.map((row) => `<div class="dashboard-bar-row"><span>${esc(row.categoryName)}</span><div><i style="width:${Number(row.netSales || 0) / categoryMax * 100}%"></i></div><b>${money(row.netSales)}</b></div>`).join('') : '<div class="empty-state compact">فروشی برای دسته‌بندی‌ها ثبت نشده است.</div>';
@@ -421,9 +576,6 @@ async function saveSale(print = false) {
 function clearSale() { state.items = []; renderItems(); ['discount', 'tax', 'paidAmount'].forEach((id) => { $(`#${id}`).value = '0'; }); updateSummary(); $('#saleError').classList.add('hidden'); }
 
 $('#collapseSidebar').addEventListener('click', () => { const sidebar = $('#sidebar'); sidebar.classList.toggle('collapsed'); $('#collapseSidebar').textContent = sidebar.classList.contains('collapsed') ? '›' : '‹'; });
-$('#minimizeWindow').addEventListener('click', () => window.api.window.minimize());
-$('#maximizeWindow').addEventListener('click', () => window.api.window.toggleMaximize());
-$('#closeWindow').addEventListener('click', requestApplicationClose);
 window.api.window.onCloseRequested(requestApplicationClose);
 $('#productSearch').addEventListener('input', searchProducts);
 $('#productSearch').addEventListener('keydown', (event) => { if (event.key === 'Enter' && state.products[0]) addProduct(state.products[0].id); if (event.key === 'Escape') $('#productResults').classList.add('hidden'); });
@@ -454,6 +606,7 @@ $('#version').textContent = window.appInfo?.version || '۱.۰.۰';
 $('#saleDate').value = new Date().toISOString().slice(0, 10);
 $('#clock').textContent = new Intl.DateTimeFormat('fa-IR', { dateStyle: 'medium' }).format(new Date());
 initializeDashboardMarkup();
+renderDashboardSkeleton();
 window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
 setPage('dashboard');
 
@@ -2055,9 +2208,10 @@ async function loadInvoiceList(kind) {
   const productQuery = $(`${pageSelector} .invoice-list-product-query`)?.value || '';
   const fromValue = $(`${pageSelector} .invoice-list-from`)?.value || '';
   const toValue = $(`${pageSelector} .invoice-list-to`)?.value || '';
-  const rows = await (apiKind === 'sale' ? window.api.sales.list : window.api.purchases.list)({ query, productQuery, from: jalaliInputToIso(fromValue), to: jalaliInputToIso(toValue), status: $(`${pageSelector} .invoice-list-status`)?.value || '' });
   const body = $(`#${kind}Table`);
   const columnCount = apiKind === 'sale' ? 9 : 8;
+  if (body) body.innerHTML = Array.from({ length: 6 }, () => `<tr class="skeleton-row"><td colspan="${columnCount}"><div class="skeleton line-skeleton"></div></td></tr>`).join('');
+  const rows = await (apiKind === 'sale' ? window.api.sales.list : window.api.purchases.list)({ query, productQuery, from: jalaliInputToIso(fromValue), to: jalaliInputToIso(toValue), status: $(`${pageSelector} .invoice-list-status`)?.value || '' });
   body.innerHTML = rows.length ? rows.map((row) => {
     const eligibleForMerge = apiKind === 'sale' && row.source === 'daily' && row.status === 'active';
     const selection = apiKind === 'sale' ? `<td class="invoice-selection-column">${eligibleForMerge ? `<input class="daily-sale-merge-select" type="checkbox" value="${row.id}" data-date="${row.date}" aria-label="انتخاب ${esc(row.invoiceNumber)} برای ادغام">` : ''}</td>` : '';
@@ -2876,43 +3030,67 @@ function initializeAssistantPage() {
         <label class="assistant-label">درخواست خود را به فارسی بنویسید
           <textarea id="assistantInput" rows="2" placeholder="مثال: لیست پروانه های لباسشویی را لیست کن و 20 درصد به مبلغ خرید اضافه کن"></textarea>
         </label>
+        <div class="assistant-chips">
+          <button type="button" class="assistant-chip" data-text="پمپ تخلیه لباسشویی را لیست کن">فهرست: پمپ تخلیه لباسشویی</button>
+          <button type="button" class="assistant-chip" data-text="پمپ تخلیه لباسشویی را لیست کن و 10 درصد به قیمت خرید اضافه کن">+۱۰٪ قیمت خرید</button>
+          <button type="button" class="assistant-chip" data-text="سیم مفتالی را لیست کن و 15 درصد از قیمت فروش کم کن و نام محصول تعداد موجودی و قیمت را نشان بده">−۱۵٪ فروش با ستون‌های دلخواه</button>
+        </div>
         <div class="assistant-actions-row">
           <button id="assistantRun" class="primary" type="button">تحلیل و پیش‌نمایش</button>
           <button id="assistantApply" class="secondary" type="button" disabled>اعمال تغییرات</button>
+          <button id="assistantUndo" class="text-button" type="button">واگردانی آخرین عملیات</button>
           <button id="assistantExport" class="secondary" type="button" disabled>خروجی CSV</button>
+          <button id="assistantExportPdf" class="secondary" type="button" disabled>خروجی PDF</button>
           <label class="check-label"><input id="assistantSelectAll" type="checkbox" checked> انتخاب همه</label>
         </div>
         <div id="assistantSummary" class="assistant-summary"></div>
         <div id="assistantError" class="form-error hidden"></div>
-        <div class="table-wrap"><table><thead><tr><th></th><th>کد</th><th>نام کالا</th><th>دسته</th><th>خرید (فعلی ← جدید)</th><th>عمده (فعلی ← جدید)</th><th>فروش (فعلی ← جدید)</th></tr></thead><tbody id="assistantRows"></tbody></table></div>
+        <div class="table-wrap"><table><thead id="assistantHead"></thead><tbody id="assistantRows"></tbody></table></div>
       </div>
     </section>`);
   const state = { plan: null };
   const toUser = (cents) => Math.round((Number(cents) || 0) / 100 * currencyFactor());
   const toCents = (raw) => Math.max(0, Math.round(parsePriceInput(raw) * 100 / currencyFactor()));
   const fieldInput = (id, field) => document.querySelector(`.assistant-new-price[data-id="${id}"][data-field="${field}"]`);
+  const columnLabels = { code: 'کد', name: 'نام کالا', category: 'دسته', stock: 'موجودی', unit: 'واحد', barcode: 'بارکد', purchasePrice: 'قیمت خرید', wholesalePrice: 'قیمت عمده', retailPrice: 'قیمت فروش', margin: 'سود ٪' };
+  const priceColumns = ['purchasePrice', 'wholesalePrice', 'retailPrice'];
+  const matchModeLabels = { keyword: 'تطبیق کلمه‌ای', partial: 'تطبیق بخشی کلمات', semantic: 'جست‌وجوی معنایی لوکال', continued: 'ادامهٔ انتخاب قبلی' };
   const render = () => {
     const plan = state.plan;
     const adjust = plan?.action?.type === 'adjust';
+    const columns = plan?.columns?.length ? plan.columns : ['code', 'name', 'stock', 'purchasePrice', 'wholesalePrice', 'retailPrice'];
+    const targetField = adjust ? { purchase: 'purchasePrice', wholesale: 'wholesalePrice', retail: 'retailPrice' }[plan.action.field] : null;
     $('#assistantApply').disabled = !adjust;
     $('#assistantExport').disabled = !plan?.products?.length;
+    $('#assistantExportPdf').disabled = !plan?.products?.length;
     const fieldLabels = { purchase: 'قیمت خرید', wholesale: 'قیمت عمده', retail: 'قیمت فروش' };
     $('#assistantSummary').textContent = plan
-      ? `${new Intl.NumberFormat('fa-IR').format(plan.products.length)} کالا مطابقت دارد · روش: ${plan.matchMode === 'semantic' ? 'جست‌وجوی معنایی لوکال' : 'تطبیق کلمه‌ای'}${adjust ? ` · عملیات: ${plan.action.direction > 0 ? 'افزایش' : 'کاهش'} ${new Intl.NumberFormat('fa-IR').format(plan.action.percent)}٪ ${fieldLabels[plan.action.field]} — مقادیر ستون «جدید» را می‌توانید قبل از اعمال ویرایش کنید.` : ' · فقط فهرست‌سازی (بدون تغییر قیمت)'}`
+      ? `${new Intl.NumberFormat('fa-IR').format(plan.products.length)} کالا مطابقت دارد · روش: ${matchModeLabels[plan.matchMode] || 'تطبیق کلمه‌ای'}${adjust ? ` · عملیات: ${plan.action.direction > 0 ? 'افزایش' : 'کاهش'} ${new Intl.NumberFormat('fa-IR').format(plan.action.percent)}٪ ${fieldLabels[plan.action.field]} — مقادیر ستون «جدید» را می‌توانید قبل از اعمال ویرایش کنید.` : ' · فقط فهرست‌سازی (بدون تغییر قیمت)'}`
       : '';
-    $('#assistantRows').innerHTML = plan?.products?.length ? plan.products.map((p) => `<tr>
-      <td><input class="assistant-select" type="checkbox" data-id="${p.id}" checked aria-label="انتخاب ${esc(p.name)}"></td>
-      <td><strong>${esc(p.code)}</strong></td><td>${esc(p.name)}<small>${esc(p.unitSymbol || '')}</small></td><td>${esc(p.categoryName || '—')}</td>
-      <td>${money(p.purchasePrice)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="purchasePrice" value="${toUser(p.newPurchasePrice)}"></td>
-      <td>${money(p.wholesalePrice)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="wholesalePrice" value="${toUser(p.newWholesalePrice)}"></td>
-      <td>${money(p.retailPrice)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="retailPrice" value="${toUser(p.newRetailPrice)}"></td></tr>`).join('')
-      : '<tr class="empty-row"><td colspan="7">ابتدا یک درخواست تحلیل کنید یا کالایی مطابق درخواست پیدا نشد.</td></tr>';
+    $('#assistantHead').innerHTML = `<tr><th></th>${columns.map((column) => `<th>${columnLabels[column] || column}${column === targetField ? ' (فعلی ← جدید)' : ''}</th>`).join('')}</tr>`;
+    const cell = (p, column) => {
+      if (column === 'margin') {
+        if (p.marginPercent == null) return '—';
+        return `<span class="${p.belowCost ? 'debt-amount' : 'profit-amount'}" title="${p.belowCost ? 'هشدار: قیمت فروش زیر قیمت خرید است' : 'حاشیه سود نسبت به قیمت خرید'}">${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(p.marginPercent)}٪</span>`;
+      }
+      if (priceColumns.includes(column)) {
+        const current = { purchasePrice: p.purchasePrice, wholesalePrice: p.wholesalePrice, retailPrice: p.retailPrice }[column];
+        const next = { purchasePrice: p.newPurchasePrice, wholesalePrice: p.newWholesalePrice, retailPrice: p.newRetailPrice }[column];
+        return column === targetField
+          ? `${money(current)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="${column}" value="${toUser(next)}">`
+          : money(current);
+      }
+      const value = { code: p.code, name: p.name, category: p.categoryName || '—', stock: new Intl.NumberFormat('fa-IR').format(Number(p.stock || 0)), unit: p.unitSymbol || '—', barcode: p.barcode || '—' }[column];
+      return column === 'name' ? `${esc(value)}<small>${esc(p.unitSymbol || '')}</small>` : esc(value ?? '—');
+    };
+    $('#assistantRows').innerHTML = plan?.products?.length ? plan.products.map((p) => `<tr><td><input class="assistant-select" type="checkbox" data-id="${p.id}" checked aria-label="انتخاب ${esc(p.name)}"><button type="button" class="assistant-remove" data-id="${p.id}" title="حذف از نتیجه">✕</button></td>${columns.map((column) => `<td>${cell(p, column)}</td>`).join('')}</tr>`).join('')
+      : `<tr class="empty-row"><td colspan="${columns.length + 1}">ابتدا یک درخواست تحلیل کنید یا کالایی مطابق درخواست پیدا نشد.</td></tr>`;
   };
   const run = async () => {
     const errorBox = $('#assistantError');
     errorBox.classList.add('hidden');
     try {
-      state.plan = await window.api.ai.plan($('#assistantInput').value || '');
+      state.plan = await window.api.ai.plan($('#assistantInput').value || '', (state.plan?.products || []).map((product) => product.id));
       render();
     } catch (error) {
       state.plan = null;
@@ -2922,34 +3100,76 @@ function initializeAssistantPage() {
     }
   };
   $('#assistantRun').addEventListener('click', run);
+  document.querySelectorAll('.assistant-chip').forEach((chip) => chip.addEventListener('click', () => {
+    $('#assistantInput').value = chip.dataset.text || '';
+    run();
+  }));
+  $('#assistantRows').addEventListener('click', (event) => {
+    const remove = event.target.closest('.assistant-remove');
+    if (!remove || !state.plan) return;
+    state.plan.products = state.plan.products.filter((product) => Number(product.id) !== Number(remove.dataset.id));
+    render();
+  });
   $('#assistantSelectAll').addEventListener('change', (event) => {
     document.querySelectorAll('.assistant-select').forEach((box) => { box.checked = event.target.checked; });
   });
   $('#assistantApply').addEventListener('click', async () => {
     const selected = [...document.querySelectorAll('.assistant-select:checked')].map((box) => Number(box.dataset.id));
     if (!selected.length) return showToast('هیچ کالایی انتخاب نشده است.', true);
-    if (!await showConfirmDialog({ title: 'اعمال تغییرات قیمت', message: `قیمت‌های ویرایش‌شده روی ${new Intl.NumberFormat('fa-IR').format(selected.length)} کالا اعمال شود؟`, confirmText: 'اعمال شود' })) return;
+    const selectedIds = new Set(selected);
+    const riskyCount = (state.plan?.products || []).filter((p) => selectedIds.has(Number(p.id)) && p.belowCost).length;
+    const message = riskyCount
+      ? `هشدار: در ${new Intl.NumberFormat('fa-IR').format(riskyCount)} کالا قیمت فروش به زیر قیمت خرید می‌رسد (حاشیه سود منفی). قیمت‌ها اعمال شود؟`
+      : `قیمت‌های ویرایش‌شده روی ${new Intl.NumberFormat('fa-IR').format(selected.length)} کالا اعمال شود؟`;
+    if (!await showConfirmDialog({ title: 'اعمال تغییرات قیمت', message, confirmText: 'اعمال شود', destructive: riskyCount > 0 })) return;
     try {
-      const result = await window.api.ai.apply(selected.map((id) => ({
-        id,
-        purchasePrice: toCents(fieldInput(id, 'purchasePrice')?.value),
-        wholesalePrice: toCents(fieldInput(id, 'wholesalePrice')?.value),
-        retailPrice: toCents(fieldInput(id, 'retailPrice')?.value)
-      })));
+      const result = await window.api.ai.apply(selected.map((id) => {
+        const update = { id };
+        ['purchasePrice', 'wholesalePrice', 'retailPrice'].forEach((field) => {
+          const input = fieldInput(id, field);
+          if (input) update[field] = toCents(input.value);
+        });
+        return update;
+      }));
       showToast(`${new Intl.NumberFormat('fa-IR').format(result.updated)} کالا به‌روزرسانی شد.`);
       await run();
     } catch (error) { showToast(error?.message || 'اعمال تغییرات انجام نشد.', true); }
   });
-  $('#assistantExport').addEventListener('click', async () => {
+  const buildExportRows = () => {
     const selected = new Set([...document.querySelectorAll('.assistant-select:checked')].map((box) => Number(box.dataset.id)));
-    const rows = [['کد', 'نام کالا', 'دسته', 'خرید فعلی', 'خرید جدید', 'عمده فعلی', 'عمده جدید', 'فروش فعلی', 'فروش جدید']];
-    for (const p of (state.plan?.products || []).filter((p) => selected.has(Number(p.id)))) {
-      rows.push([p.code, p.name, p.categoryName, toUser(p.purchasePrice), toCents(fieldInput(p.id, 'purchasePrice')?.value) / 100 * currencyFactor(), toUser(p.wholesalePrice), toCents(fieldInput(p.id, 'wholesalePrice')?.value) / 100 * currencyFactor(), toUser(p.retailPrice), toCents(fieldInput(p.id, 'retailPrice')?.value) / 100 * currencyFactor()]);
+    const plan = state.plan;
+    const columns = plan?.columns?.length ? plan.columns : ['code', 'name', 'stock', 'purchasePrice', 'wholesalePrice', 'retailPrice'];
+    const targetField = plan?.action?.type === 'adjust' ? { purchase: 'purchasePrice', wholesale: 'wholesalePrice', retail: 'retailPrice' }[plan.action.field] : null;
+    const rows = [columns.flatMap((column) => column === targetField ? [`${columnLabels[column]} فعلی`, `${columnLabels[column]} جدید`] : [columnLabels[column] || column])];
+    for (const p of (plan?.products || []).filter((product) => selected.has(Number(product.id)))) {
+      rows.push(columns.flatMap((column) => {
+        const current = { code: p.code, name: p.name, category: p.categoryName, stock: new Intl.NumberFormat('fa-IR').format(Number(p.stock || 0)), unit: p.unitSymbol, barcode: p.barcode, purchasePrice: toUser(p.purchasePrice), wholesalePrice: toUser(p.wholesalePrice), retailPrice: toUser(p.retailPrice), margin: p.marginPercent == null ? '—' : `${p.marginPercent}٪` }[column];
+        if (column === targetField) {
+          const input = fieldInput(p.id, column);
+          return [current, input ? Math.round(toCents(input.value) / 100 * currencyFactor()) : current];
+        }
+        return [current];
+      }));
     }
+    return rows;
+  };
+  const exportOutput = async (kind) => {
     try {
-      const result = await window.api.ai.exportCsv(rows, 'دستیار-هوشمند');
-      if (!result.canceled) showToast('خروجی CSV ذخیره شد.');
-    } catch (error) { showToast(error?.message || 'خروجی CSV انجام نشد.', true); }
+      const result = kind === 'pdf'
+        ? await window.api.ai.exportPdf(buildExportRows(), 'دستیار-هوشمند')
+        : await window.api.ai.exportCsv(buildExportRows(), 'دستیار-هوشمند');
+      if (!result.canceled) showToast(kind === 'pdf' ? 'خروجی PDF ذخیره شد.' : 'خروجی CSV ذخیره شد.');
+    } catch (error) { showToast(error?.message || 'خروجی انجام نشد.', true); }
+  };
+  $('#assistantExport').addEventListener('click', () => exportOutput('csv'));
+  $('#assistantExportPdf').addEventListener('click', () => exportOutput('pdf'));
+  $('#assistantUndo').addEventListener('click', async () => {
+    if (!await showConfirmDialog({ title: 'واگردانی آخرین عملیات', message: 'قیمت‌های آخرین اعمالِ دستیار هوشمند به مقادیر قبلی برگردد؟', confirmText: 'واگردانی', destructive: true })) return;
+    try {
+      const result = await window.api.ai.undo();
+      showToast(`${new Intl.NumberFormat('fa-IR').format(result.undone)} کالا به قیمت‌های قبلی بازگشت.`);
+      await run();
+    } catch (error) { showToast(error?.message || 'واگردانی انجام نشد.', true); }
   });
 }
 

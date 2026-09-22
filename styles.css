@@ -803,7 +803,7 @@ select option{background:#111a2b;color:#e5edf7}
   font-display:swap;
 }
 :root{
-  font-family:"Vazir UI","Segoe UI","Tahoma","Arial",sans-serif;
+  font-family:"Vazir UI","Segoe UI Variable Text","Segoe UI","Tahoma","Arial",sans-serif;
 }
 .invoice-print-sheet{
   font-family:"Vazir UI","Tahoma","Segoe UI",sans-serif;
@@ -1100,3 +1100,134 @@ tr.pinned-row td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .assistant-actions-row{display:flex;align-items:center;gap:10px;margin:12px 0;flex-wrap:wrap}
 .assistant-summary{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.8}
 .assistant-new-price{width:110px;margin:0!important;padding:6px!important;text-align:left}
+
+/* ── UX polish ─────────────────────────────────────────────────────────── */
+/* Sticky table headers: long lists keep their column titles while scrolling. */
+.table-wrap th{position:sticky;top:0;z-index:2}
+@media print{.table-wrap th{position:static}}
+/* Row hover affordance for dense data tables. */
+.table-wrap tbody tr{transition:background-color .12s ease}
+.table-wrap tbody tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+tr.pinned-row:hover td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+/* Keyboard focus must always be visible for mouse-free navigation. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button:disabled{opacity:.5;cursor:not-allowed}
+/* Consistent slim scrollbars across dark/light themes (hacker has its own). */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:#22314a;border-radius:5px}
+*::-webkit-scrollbar-thumb:hover{background:#2d405e}
+:root[data-theme="light"] *::-webkit-scrollbar-thumb{background:#c3cfdd}
+:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{background:#a9b8c9}
+/* Toast: icon + entrance animation. */
+.toast{display:flex;align-items:center;gap:9px;animation:toast-in .2s ease}
+@keyframes toast-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.toast-icon{width:18px;height:18px;flex:none;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.16);font-size:11px;font-weight:700}
+/* Assistant example chips and row removal. */
+.assistant-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.assistant-chip{border:1px solid #30435f;background:#172237;color:#b8c8dc;border-radius:15px;padding:5px 12px;font:inherit;font-size:11px;cursor:pointer}
+.assistant-chip:hover{border-color:var(--accent);color:var(--accent)}
+:root[data-theme="light"] .assistant-chip{background:#fff;border-color:#b8c6d6;color:#475569}
+.assistant-remove{border:0;background:transparent;color:#e5747b;cursor:pointer;font-size:12px;margin-right:4px}
+.assistant-remove:hover{color:#ff9a9d}
+
+/* ── Windows 11 Fluent polish ──────────────────────────────────────────── */
+/* Native caption buttons sit top-right; move the brand clear of them. */
+.titlebar-brand{margin-right:auto}
+/* Fluent control shapes: 4px radii like native Win11 buttons and inputs. */
+.primary,.secondary,.ghost,.text-button,.icon-button{border-radius:4px}
+.panel input,.panel select,.panel textarea,
+.settings-card input,.settings-card select,.settings-card textarea{border-radius:4px}
+kbd,.form-error{border-radius:4px}
+/* Fluent focus: accent underline inside text fields. */
+.panel input:focus,.panel select:focus,.panel textarea:focus{box-shadow:inset 0 -2px 0 0 var(--accent)}
+/* Fluent hover: translucent overlay instead of a full color swap. */
+.secondary:hover,.text-button:hover,.icon-button:hover{background:rgba(255,255,255,.06)}
+:root[data-theme="light"] .secondary:hover,
+:root[data-theme="light"] .text-button:hover,
+:root[data-theme="light"] .icon-button:hover{background:rgba(0,0,0,.05)}
+.primary:hover{filter:brightness(1.07)}
+.primary:active,.secondary:active{transform:translateY(.5px)}
+/* Soft Fluent card depth. */
+.panel,.metric,.quick-card,.settings-card{box-shadow:0 1px 3px rgba(0,0,0,.16)}
+:root[data-theme="light"] .panel,:root[data-theme="light"] .metric,
+:root[data-theme="light"] .quick-card,:root[data-theme="light"] .settings-card{box-shadow:0 1px 3px rgba(15,23,42,.08)}
+
+/* SVG nav icons: single-color, scale with the theme accent. */
+.nav-item span:first-child svg{width:18px;height:18px;display:block;margin:0 auto}
+.sidebar-submenu .nav-item span:first-child svg,.invoice-submenu .nav-item span:first-child svg{width:16px;height:16px}
+.icon-button svg{width:16px;height:16px;display:block}
+.notification-button svg{width:19px;height:19px}
+.sidebar-menu-toggle span:first-child svg,.product-menu-toggle span:first-child svg,.invoice-menu-toggle span:first-child svg{width:18px;height:18px;display:block}
+
+/* Fluent status badges: tinted fill + colored status dot. */
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:500;line-height:1.5}
+.status-badge::before{content:"";width:6px;height:6px;flex:none;border-radius:50%;background:currentColor}
+.status-badge.active{background:rgba(15,123,15,.12);color:#0f7b0f}
+.status-badge.warning{background:rgba(157,93,0,.14);color:#9d5d00}
+.status-badge.inactive{background:rgba(100,116,139,.14);color:#64748b}
+:root[data-theme="dark"] .status-badge.active,:root[data-theme="hacker"] .status-badge.active{background:rgba(108,203,95,.14);color:#6ccb5f}
+:root[data-theme="dark"] .status-badge.warning,:root[data-theme="hacker"] .status-badge.warning{background:rgba(255,184,81,.15);color:#ffb75c}
+:root[data-theme="dark"] .status-badge.inactive,:root[data-theme="hacker"] .status-badge.inactive{background:rgba(148,163,184,.14);color:#94a3b8}
+
+/* Tabular figures: money columns align digit-by-digit across rows. */
+table td,.metric strong,.summary-lines strong,.grand-total strong,.remaining strong,
+.cart-summary strong,.dashboard-list-row b,.report-metrics .metric-card strong,
+.invoice-detail-totals strong,.money-input,.assistant-new-price,.debt-amount{font-variant-numeric:tabular-nums}
+
+/* Dashboard: SVG trend chart */
+.trend-chart{width:100%;height:auto;display:block}
+.trend-grid{stroke:var(--border);stroke-width:1}
+.trend-axis-text{fill:var(--muted);font-size:10px}
+.trend-area{fill:color-mix(in srgb,var(--accent) 14%,transparent)}
+.trend-sales{stroke:var(--accent);stroke-width:2.2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.trend-profit{stroke:#34d399;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.trend-dot-sales{fill:var(--accent)}
+.trend-dot-profit{fill:#34d399}
+.trend-point:hover .trend-dot-sales{r:5}
+
+/* Dashboard: payment-method donut */
+.donut-wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center;padding:6px 0}
+.donut{width:150px;height:150px;flex:none}
+.donut-total{fill:var(--text-strong);font-size:14px;font-weight:700}
+.donut-caption{fill:var(--muted);font-size:9px}
+.donut-legend{display:grid;gap:9px;min-width:200px;flex:1}
+.donut-legend-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)}
+.donut-legend-row i{width:9px;height:9px;border-radius:3px;flex:none}
+.donut-legend-row b{margin-right:auto;color:var(--text-strong);font-size:12px;font-weight:600}
+.donut-legend-row small{color:var(--muted);font-size:10px;min-width:44px;text-align:left}
+
+/* Dashboard: heading chips, motif and KPI sparklines */
+.dashboard-heading{gap:18px}
+.dashboard-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.dashboard-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:14px;font-size:11px;border:1px solid var(--border);color:var(--text-muted)}
+.dashboard-chip b{font-weight:600;color:var(--text-main);font-size:11px}
+.dashboard-chip small{color:var(--muted);font-size:10px}
+.dashboard-chip i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.dashboard-chip.success{background:rgba(15,123,15,.12);color:#0f7b0f}
+.dashboard-chip.warning{background:rgba(157,93,0,.14);color:#9d5d00}
+.dashboard-chip.danger{background:rgba(196,43,28,.12);color:#c42b1c}
+.dashboard-chip.success b,.dashboard-chip.warning b,.dashboard-chip.danger b{color:inherit}
+.dashboard-chip.success small,.dashboard-chip.warning small,.dashboard-chip.danger small{color:inherit}
+:root[data-theme="dark"] .dashboard-chip.success,:root[data-theme="hacker"] .dashboard-chip.success{background:rgba(108,203,95,.14);color:#6ccb5f}
+:root[data-theme="dark"] .dashboard-chip.warning,:root[data-theme="hacker"] .dashboard-chip.warning{background:rgba(255,184,81,.15);color:#ffb75c}
+:root[data-theme="dark"] .dashboard-chip.danger,:root[data-theme="hacker"] .dashboard-chip.danger{background:rgba(255,107,107,.14);color:#ff8a8a}
+.dashboard-motif{width:150px;height:auto;opacity:.55;align-self:center;flex:none}
+.motif-line{stroke:var(--accent);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.motif-area{fill:color-mix(in srgb,var(--accent) 10%,transparent)}
+.motif-dot{fill:var(--accent)}
+.kpi-spark-holder{display:block;height:30px;margin-top:8px;color:var(--accent)}
+.kpi-spark-holder svg{width:110px;height:30px;display:block}
+:root[data-theme="light"] .kpi-spark-holder{color:#0284c7}
+:root[data-theme="hacker"] .kpi-spark-holder{color:#00ff66}
+
+/* Skeleton loading placeholders */
+.skeleton{position:relative;overflow:hidden;background:color-mix(in srgb,var(--muted) 16%,transparent);border-radius:6px}
+.skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);animation:skeleton-wave 1.4s ease-in-out infinite}
+@keyframes skeleton-wave{to{transform:translateX(100%)}}
+.chart-skeleton{height:200px;width:100%}
+.row-skeleton{height:42px;margin:9px 0}
+td .skeleton.line-skeleton{height:13px;width:62%;margin:0 auto}
+.skeleton-row td{padding:12px 10px}
+:root[data-theme="light"] .skeleton{background:#e2e8f0}
+:root[data-theme="light"] .skeleton::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent)}

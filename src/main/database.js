@@ -513,6 +513,21 @@ function requireDatabase() {
   return database;
 }
 
+// Runs multi-row writes as one atomic unit so a mid-loop failure can never
+// leave half of a batch applied (used by the AI assistant bulk operations).
+function runInTransaction(work) {
+  const db = requireDatabase();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = work();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const passwordHash = crypto.scryptSync(String(password || ''), salt, 64).toString('hex');
   return { passwordHash, passwordSalt: salt };
@@ -3471,4 +3486,6 @@ module.exports = {
   ,importProducts
   ,getCurrencyInputFactor
   ,setSalePinned
+  ,runInTransaction
+  ,requireDatabase
 };

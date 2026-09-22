@@ -23,9 +23,11 @@ contextBridge.exposeInMainWorld('api', {
   ai: {
     status: () => ipcRenderer.invoke('ai:status'),
     semanticSearch: (payload) => ipcRenderer.invoke('ai:semantic-search', payload),
-    plan: (text) => ipcRenderer.invoke('ai:assistant-plan', { text }),
+    plan: (text, previousIds) => ipcRenderer.invoke('ai:assistant-plan', { text, previousIds }),
     apply: (updates) => ipcRenderer.invoke('ai:assistant-apply', { updates }),
-    exportCsv: (rows, fileName) => ipcRenderer.invoke('ai:assistant-export', { rows, fileName })
+    undo: () => ipcRenderer.invoke('ai:assistant-undo'),
+    exportCsv: (rows, fileName) => ipcRenderer.invoke('ai:assistant-export', { rows, fileName }),
+    exportPdf: (rows, fileName) => ipcRenderer.invoke('ai:assistant-export-pdf', { rows, fileName })
   },
   categories: {
     list: (includeInactive) => ipcRenderer.invoke('categories:list', includeInactive),
@@ -155,6 +157,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('window:close-requested', listener);
       return () => ipcRenderer.removeListener('window:close-requested', listener);
     },
-    isMaximized: () => ipcRenderer.invoke('window:is-maximized')
+    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    setOverlay: (colors) => ipcRenderer.invoke('window:set-overlay', colors)
   }
 });

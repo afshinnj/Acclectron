@@ -7,13 +7,15 @@ const {
   closeDatabase,
   createSale,
   getDatabase,
-  getSalesReport
+  getSalesReport,
+  loginUser
 } = require('../src/main/database');
 
 test('aggregates sales by day, ISO week, month and year', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'accletron-report-'));
   const db = getDatabase(directory);
   try {
+    loginUser('admin', 'admin123');
     const productResult = db.prepare("INSERT INTO products (code, name, sale_price, stock, purchase_price) VALUES ('REPORT-001', 'کالای گزارش', 1000000, 100, 500000)").run();
     const product = { id: Number(productResult.lastInsertRowid) };
     for (const [date, price] of [['2026-01-05', 10000], ['2026-01-06', 20000], ['2026-02-02', 30000], ['2027-01-04', 40000]]) {

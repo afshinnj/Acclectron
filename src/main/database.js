@@ -16,6 +16,11 @@ let currentUserId = null;
 const webAuthnChallenges = new Map();
 const webAuthnRpId = 'accletron.local';
 const webAuthnOrigin = 'https://accletron.local';
+// Brute-force protection for the password login. Five failures lock the
+// account for a short cooling-off window; a successful login clears the state.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 5 * 60 * 1000;
+const loginFailures = new Map();
 const ROLE_PERMISSIONS = {
   admin: ['*'],
   manager: ['sales', 'purchases', 'returns', 'cash', 'inventory', 'reports', 'settings', 'users'],
@@ -442,6 +447,9 @@ function getDatabase(userDataPath) {
   addColumnIfMissing(database, 'stock_movements', 'description', 'TEXT');
   addColumnIfMissing(database, 'sales_returns', 'balance_adjustment', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(database, 'purchase_returns', 'balance_adjustment', 'INTEGER NOT NULL DEFAULT 0');
+  // Left NULL on purpose so the migration below can tell "never seen" apart
+  // from an explicit 0 for pre-existing administrators.
+  addColumnIfMissing(database, 'users', 'must_change_password', 'INTEGER');
 
   database.exec(`
     UPDATE categories SET code = CAST(id AS TEXT) WHERE code IS NULL OR trim(code) = '';
@@ -511,25 +519,22 @@ function getDatabase(userDataPath) {
   if (userCount === 0) {
     const { passwordHash, passwordSalt } = hashPassword('admin123');
     database.prepare(`
-      INSERT INTO users (username, display_name, password_hash, password_salt, role)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO users (username, display_name, password_hash, password_salt, role, must_change_password)
+      VALUES (?, ?, ?, ?, ?, 1)
     `).run('admin', 'مدیر سیستم', passwordHash, passwordSalt, 'admin');
   }
-  // One-time recovery migration for installations where the seeded admin
-  // password was not usable. Existing custom passwords are not overwritten
-  // after this marker has been written.
-  const resetMarker = database.prepare('SELECT value FROM app_settings WHERE key = ?').get('adminPasswordResetV1');
-  if (!resetMarker) {
-    const admin = database.prepare('SELECT id FROM users WHERE username = ?').get('admin');
-    if (admin) {
-      const { passwordHash, passwordSalt } = hashPassword('admin123');
-      database.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(passwordHash, passwordSalt, admin.id);
-    }
-    database.prepare(`
-      INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).run('adminPasswordResetV1', JSON.stringify(true));
+  // Installations that were seeded before the forced-password-change flag
+  // existed keep their current password; only the untouched default is flagged
+  // so users are prompted to replace it.
+  const adminsWithoutFlag = database.prepare(`
+    SELECT u.id, u.password_hash AS passwordHash, u.password_salt AS passwordSalt
+    FROM users u
+    WHERE u.username = 'admin' AND u.must_change_password IS NULL
+  `).all();
+  for (const admin of adminsWithoutFlag) {
+    const defaultHash = hashPassword('admin123', admin.passwordSalt).passwordHash;
+    const isDefault = defaultHash === admin.passwordHash;
+    database.prepare('UPDATE users SET must_change_password = ? WHERE id = ?').run(isDefault ? 1 : 0, admin.id);
   }
   return database;
 }
@@ -560,14 +565,15 @@ function setCurrentUser(userId = null) {
 function getCurrentUser() {
   if (!currentUserId) return null;
   const row = requireDatabase().prepare(`
-    SELECT id, username, display_name AS displayName, role, is_active AS isActive, last_login_at AS lastLoginAt
+    SELECT id, username, display_name AS displayName, role, is_active AS isActive, last_login_at AS lastLoginAt,
+      must_change_password AS mustChangePassword
     FROM users WHERE id = ?
   `).get(currentUserId);
   if (!row || !row.isActive) {
     currentUserId = null;
     return null;
   }
-  return { ...row, isActive: Boolean(row.isActive) };
+  return { ...row, isActive: Boolean(row.isActive), mustChangePassword: Boolean(row.mustChangePassword) };
 }
 
 function validateQuickPin(pin) {
@@ -638,9 +644,17 @@ function unlockWithQuickPin(pin) {
   return user;
 }
 
+function pruneExpiredWebAuthnChallenges() {
+  const now = Date.now();
+  for (const [key, value] of webAuthnChallenges) {
+    if (!value || value.expiresAt < now) webAuthnChallenges.delete(key);
+  }
+}
+
 function beginWindowsHelloRegistration() {
   const user = getCurrentUser();
   if (!user) throw new Error('برای ثبت Windows Hello ابتدا وارد حساب شوید.');
+  pruneExpiredWebAuthnChallenges();
   const existing = requireDatabase().prepare('SELECT credential_id AS credentialId FROM webauthn_credentials WHERE user_id = ?').all(user.id);
   const options = generateRegistrationOptions({
     rpName: 'Acclectron', rpID: webAuthnRpId, userName: user.username,
@@ -670,6 +684,7 @@ function finishWindowsHelloRegistration(response) {
 }
 
 function beginWindowsHelloAuthentication(username = '') {
+  pruneExpiredWebAuthnChallenges();
   const user = requireDatabase().prepare('SELECT id FROM users WHERE username = ? AND is_active = 1').get(String(username || '').trim());
   if (!user) throw new Error('کاربر فعال پیدا نشد.');
   const credentials = requireDatabase().prepare('SELECT credential_id AS credentialId FROM webauthn_credentials WHERE user_id = ?').all(user.id);
@@ -699,7 +714,7 @@ function finishWindowsHelloAuthentication(username, response) {
 
 function requirePermission(permission) {
   const user = getCurrentUser();
-  if (!user) return true;
+  if (!user) throw new Error('برای انجام این عملیات ابتدا وارد حساب کاربری شوید.');
   const permissions = ROLE_PERMISSIONS[user.role] || [];
   if (permissions.includes('*') || permissions.includes(permission)) return true;
   throw new Error('کاربر جاری مجوز انجام این عملیات را ندارد.');
@@ -733,10 +748,11 @@ function createUser(payload = {}) {
 function listUsers() {
   const rows = requireDatabase().prepare(`
     SELECT id, username, display_name AS displayName, role, is_active AS isActive,
-      last_login_at AS lastLoginAt, created_at AS createdAt, updated_at AS updatedAt
+      last_login_at AS lastLoginAt, created_at AS createdAt, updated_at AS updatedAt,
+      must_change_password AS mustChangePassword
     FROM users ORDER BY is_active DESC, username
   `).all();
-  return rows.map((row) => ({ ...row, isActive: Boolean(row.isActive) }));
+  return rows.map((row) => ({ ...row, isActive: Boolean(row.isActive), mustChangePassword: Boolean(row.mustChangePassword) }));
 }
 
 function setUserActive(id, active) {
@@ -748,17 +764,49 @@ function setUserActive(id, active) {
   return listUsers().find((user) => user.id === Number(id));
 }
 
+function assertLoginNotLocked(username) {
+  const record = loginFailures.get(username);
+  if (!record) return;
+  if (record.lockedUntil && record.lockedUntil > Date.now()) {
+    const minutes = Math.max(1, Math.ceil((record.lockedUntil - Date.now()) / 60000));
+    throw new Error(`تلاش‌های ناموفق زیاد؛ ورود تا ${minutes} دقیقه دیگر قفل است.`);
+  }
+  if (record.lockedUntil && record.lockedUntil <= Date.now()) loginFailures.delete(username);
+}
+
+function registerFailedLogin(username) {
+  const record = loginFailures.get(username) || { attempts: 0, lockedUntil: 0 };
+  record.attempts += 1;
+  if (record.attempts >= LOGIN_MAX_ATTEMPTS) {
+    record.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+    record.attempts = 0;
+  }
+  loginFailures.set(username, record);
+}
+
 function loginUser(username, password) {
   const db = requireDatabase();
-  const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(String(username || '').trim().toLowerCase());
-  if (!user) throw new Error('نام کاربری یا رمز عبور نادرست است.');
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  assertLoginNotLocked(normalizedUsername);
+  const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(normalizedUsername);
   const passwordless = getAppSettings().security?.passwordlessLogin === true;
-  if (!passwordless) {
+  let passwordMatches = true;
+  if (!user) {
+    // Hash anyway so a missing username is not answered faster than a wrong
+    // password, which would leak which usernames exist.
+    hashPassword(password || '', 'login-timing-salt');
+  } else if (!passwordless) {
     const { passwordHash } = hashPassword(password, user.password_salt);
     const a = Buffer.from(passwordHash, 'hex');
     const b = Buffer.from(user.password_hash, 'hex');
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('نام کاربری یا رمز عبور نادرست است.');
+    passwordMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
   }
+  if (!user || !passwordMatches) {
+    registerFailedLogin(normalizedUsername);
+    auditLog('auth.login.failed', 'user', user?.id || null, { username: normalizedUsername });
+    throw new Error('نام کاربری یا رمز عبور نادرست است.');
+  }
+  loginFailures.delete(normalizedUsername);
   currentUserId = Number(user.id);
   db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
   auditLog('auth.login', 'user', user.id);
@@ -999,7 +1047,7 @@ function changeCurrentUserPassword(currentPassword, newPassword) {
   const oldHash = hashPassword(currentPassword, existing.passwordSalt).passwordHash;
   if (oldHash !== existing.passwordHash) throw new Error('رمز عبور فعلی نادرست است.');
   const next = hashPassword(newPassword);
-  db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+  db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(next.passwordHash, next.passwordSalt, user.id);
   auditLog('auth.password_change', 'user', user.id);
   return true;
@@ -3500,16 +3548,32 @@ function listStockMovements(payload = {}) {
   `).all(productId, productId, from, from, to, to);
 }
 
+function backupDatabase(destinationPath) {
+  const db = requireDatabase();
+  if (!destinationPath) throw new Error('مسیر پشتیبان مشخص نشده است.');
+  const target = path.resolve(String(destinationPath));
+  // VACUUM INTO produces a single, fully consistent snapshot even while other
+  // connections are writing, unlike a raw file copy of a live database. It
+  // refuses to overwrite an existing file, so clear any stale target first.
+  if (fs.existsSync(target)) fs.rmSync(target);
+  db.prepare('VACUUM INTO ?').run(target);
+  return { path: target };
+}
+
 function closeDatabase() {
   if (database) {
     database.close();
     database = undefined;
   }
   currentUserId = null;
+  // Login throttling is per-database-session state, so drop it with the
+  // connection (a fresh process or restore naturally starts clean again).
+  loginFailures.clear();
 }
 
 module.exports = {
   closeDatabase,
+  backupDatabase,
   getAppSettings,
   saveAppSettings,
   createCategory,

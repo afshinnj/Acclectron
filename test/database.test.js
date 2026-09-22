@@ -66,6 +66,9 @@ function openTestDatabase({ fixtureProduct = true } = {}) {
       'INSERT INTO products (code, name, barcode, sale_price, stock, minimum_stock) VALUES (?, ?, ?, ?, ?, ?)'
     ).run('TEST-001', 'کالای آزمون', '0000000000000', 8500000, 24, 5);
   }
+  // Write operations require an authenticated session, so open every fixture
+  // database as the seeded administrator, matching real application usage.
+  loginUser('admin', 'admin123');
   return { directory, db };
 }
 
@@ -1005,6 +1008,51 @@ test('calculates profit and loss and closes a day from cash and sales data', () 
     assert.equal(listDailyClosures({ from: '2026-09-02', to: '2026-09-02' }).length, 1);
     assert.throws(() => closeDailyAccount({ date: '2026-09-02' }), /قبلاً بسته شده/);
   } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('requires an authenticated session for write operations', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    logoutUser();
+    assert.equal(getCurrentUser(), null);
+    assert.throws(() => createCashTransaction({ type: 'expense', category: 'rent', amount: 1000, date: '2026-09-02' }), /وارد حساب کاربری شوید/);
+    assert.throws(() => createSale({ items: [{ productId: 1, quantity: 1, unitPrice: 1000 }] }), /وارد حساب کاربری شوید/);
+    assert.throws(() => listAuditLogs({}), /وارد حساب کاربری شوید/);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cash_transactions').get().count, 0);
+  } finally {
+    logoutUser();
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('locks password login after five failed attempts', () => {
+  const { directory } = openTestDatabase();
+  try {
+    logoutUser();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.throws(() => loginUser('admin', 'wrong-password'), /نادرست/);
+    }
+    // Even the correct password is refused while the account is locked.
+    assert.throws(() => loginUser('admin', 'admin123'), /قفل/);
+  } finally {
+    logoutUser();
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('flags the seeded admin password for a mandatory change once only', () => {
+  const { directory } = openTestDatabase();
+  try {
+    assert.equal(getCurrentUser().mustChangePassword, true);
+    changeCurrentUserPassword('admin123', 'freshpass123');
+    assert.equal(getCurrentUser().mustChangePassword, false);
+  } finally {
+    logoutUser();
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });
   }

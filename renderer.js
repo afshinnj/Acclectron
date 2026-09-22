@@ -444,7 +444,7 @@ document.addEventListener('keydown', (event) => {
     else if (!$('#purchasesPage')?.classList.contains('hidden')) saveKeyboardInvoice('purchase');
   }
 });
-$('#version').textContent = window.appInfo?.version || '۱.۰.۰';
+$('#version').textContent = window.appInfo?.version || '1.0.2';
 $('#saleDate').value = new Date().toISOString().slice(0, 10);
 $('#clock').textContent = new Intl.DateTimeFormat('fa-IR', { dateStyle: 'medium' }).format(new Date());
 initializeDashboardMarkup();
@@ -3638,8 +3638,31 @@ async function initializeAuth() {
   } catch {}
   try {
     const current = await window.api.auth.current();
-    if (current) { backdrop.classList.add('hidden'); startQuickPinIdleMonitor(); return; }
+    if (current) {
+      backdrop.classList.add('hidden');
+      startQuickPinIdleMonitor();
+      if (current.mustChangePassword) promptMandatoryPasswordChange();
+      return;
+    }
   } catch {}
+}
+
+// The seeded administrator ships with a well-known default password. After the
+// first sign-in we nudge the user to replace it; the flag clears itself once the
+// password changes so the prompt only appears while the default is in use.
+function promptMandatoryPasswordChange() {
+  const currentPassword = window.prompt('برای امنیت بیشتر، رمز پیشفرض «admin123» را تغییر دهید.\nرمز عبور فعلی را وارد کنید:');
+  if (currentPassword == null) {
+    showToast('تغییر رمز پیشفرض به بعد موکول شد؛ لطفاً هرچه زودتر آن را تغییر دهید.', true);
+    return;
+  }
+  const nextPassword = window.prompt('رمز عبور جدید (حداقل ۶ نویسه):');
+  if (!nextPassword) return;
+  const confirmPassword = window.prompt('تکرار رمز عبور جدید:');
+  if (confirmPassword !== nextPassword) { showToast('تکرار رمز جدید یکسان نیست.', true); return; }
+  window.api.auth.changePassword(currentPassword, nextPassword)
+    .then(() => showToast('رمز عبور پیشفرض با موفقیت تغییر کرد.'))
+    .catch((e) => showToast(readableError(e, 'تغییر رمز ناموفق بود.'), true));
 }
 
 function installLoginSubmitGuard() {
@@ -3650,10 +3673,11 @@ function installLoginSubmitGuard() {
     const backdrop = $('#loginBackdrop');
     error?.classList.add('hidden');
     try {
-      await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
+      const user = await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
       backdrop?.classList.add('hidden');
       showToast('ورود موفق بود.');
       startQuickPinIdleMonitor();
+      if (user?.mustChangePassword) promptMandatoryPasswordChange();
     } catch (e) {
       if (error) {
         error.textContent = readableError(e, 'ورود ناموفق بود.');

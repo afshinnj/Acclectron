@@ -86,6 +86,7 @@ const {
   clearQuickPin,
   getQuickPinStatus,
   unlockWithQuickPin,
+  backupDatabase: createDatabaseSnapshot,
   listChecks,
   updateCheckStatus,
   createInstallmentPlan,
@@ -443,9 +444,10 @@ function registerIpcHandlers() {
 function backupDatabase(destination) {
   const targetDir = String(destination || '').trim() || app.getPath('documents');
   fs.mkdirSync(targetDir, { recursive: true });
-  const source = path.join(app.getPath('userData'), 'accletron.db');
   const file = path.join(targetDir, `accletron-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
-  fs.copyFileSync(source, file);
+  // Snapshot through SQLite so the copy stays consistent even while the app
+  // is writing, instead of copying a possibly busy database file.
+  createDatabaseSnapshot(file);
   return { path: file };
 }
 

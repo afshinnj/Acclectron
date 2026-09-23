@@ -78,6 +78,7 @@ const {
   getCurrentUser,
   listAuditLogs,
   setCurrentUser,
+  requirePermission,
   listChecks,
   updateCheckStatus,
   createInstallmentPlan,
@@ -144,9 +145,67 @@ function hardenWebContents(webContents) {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle('settings:get', () => getAppSettings());
-  ipcMain.handle('settings:save', (_event, payload) => saveAppSettings(payload));
-  ipcMain.handle('settings:printers', async () => {
+  // Security boundary of the whole IPC surface: every channel requires a
+  // logged-in user unless it is explicitly public, and the channels listed in
+  // IPC_PERMISSIONS additionally require an explicit role permission. The
+  // renderer is sandboxed behind contextIsolation, so this boundary is the
+  // single trust line for every privileged operation.
+  const PUBLIC_IPC_CHANNELS = new Set([
+    'auth:login',
+    'auth:current',
+    'auth:logout',
+    // Boot configuration (appearance, passwordless-login flag) is read while
+    // the login screen is still up; it exposes no business records.
+    'settings:get',
+    'window:is-maximized',
+    'window:set-overlay'
+  ]);
+  const IPC_PERMISSIONS = {
+    'products:create': 'products',
+    'products:update': 'products',
+    'products:quick-update': 'products',
+    'products:set-active': 'products',
+    'products:import-preview': 'products',
+    'products:import-confirm': 'products',
+    'products:template': 'products',
+    'products:export': 'products',
+    'categories:create': 'products',
+    'categories:update': 'products',
+    'categories:set-active': 'products',
+    'units:create': 'settings',
+    'units:update': 'settings',
+    'units:set-active': 'settings',
+    'parties:create': 'parties',
+    'parties:update': 'parties',
+    'parties:set-active': 'parties',
+    'reports:sales': 'reports',
+    'reports:export-csv': 'reports',
+    'reports:export-pdf': 'reports',
+    'profit-loss:report': 'reports',
+    'ai:assistant-apply': 'products',
+    'ai:assistant-undo': 'products',
+    'ai:assistant-export': 'reports',
+    'ai:assistant-export-pdf': 'reports',
+    'settings:save': 'settings',
+    'settings:choose-logo': 'settings',
+    'settings:choose-backup-path': 'settings',
+    'settings:backup-now': 'settings',
+    'settings:official-start': 'settings',
+    'settings:restore': 'settings',
+    'users:create': 'users',
+    'users:list': 'users',
+    'users:set-active': 'users'
+  };
+  const secureHandle = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+    if (PUBLIC_IPC_CHANNELS.has(channel)) return handler(event, ...args);
+    const permission = IPC_PERMISSIONS[channel];
+    if (permission) requirePermission(permission);
+    else if (!getCurrentUser()) throw new Error('ابتدا وارد حساب کاربری شوید.');
+    return handler(event, ...args);
+  });
+  secureHandle('settings:get', () => getAppSettings());
+  secureHandle('settings:save', (_event, payload) => saveAppSettings(payload));
+  secureHandle('settings:printers', async () => {
     if (!mainWindow?.webContents?.getPrintersAsync) return [];
     const printers = await mainWindow.webContents.getPrintersAsync();
     return printers.map((printer) => ({
@@ -201,7 +260,7 @@ function registerIpcHandlers() {
       }
     };
   };
-  ipcMain.handle('print:invoice', async (_event, payload = {}) => {
+  secureHandle('print:invoice', async (_event, payload = {}) => {
     if (!mainWindow?.webContents) throw new Error('پنجره چاپ آماده نیست.');
     const { options, layout } = getPrintOptions(payload);
     if (layout.print.printerName) options.deviceName = String(layout.print.printerName);
@@ -212,7 +271,7 @@ function registerIpcHandlers() {
       });
     });
   });
-  ipcMain.handle('pdf:invoice', async (_event, payload = {}) => {
+  secureHandle('pdf:invoice', async (_event, payload = {}) => {
     if (!mainWindow?.webContents) throw new Error('پنجره خروجی PDF آماده نیست.');
     const { layout } = getPrintOptions(payload);
     const isThermal = layout.paperSize === '80mm' || layout.paperSize === '58mm';
@@ -238,7 +297,7 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, data);
     return { canceled: false, filePath: selection.filePath };
   });
-  ipcMain.handle('settings:choose-logo', async () => {
+  secureHandle('settings:choose-logo', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: 'انتخاب لوگوی فروشگاه',
       properties: ['openFile'],
@@ -251,15 +310,15 @@ function registerIpcHandlers() {
     fs.copyFileSync(source, destination);
     return { canceled: false, path: destination };
   });
-  ipcMain.handle('products:search', (_event, query = '') => searchProducts(query));
+  secureHandle('products:search', (_event, query = '') => searchProducts(query));
   const aiModelRoots = [
     process.env.ACCLETRON_AI_MODELS || null,
     path.join(__dirname, 'assets', 'models'),
     process.resourcesPath ? path.join(process.resourcesPath, 'ai-models') : null,
     path.join(app.getPath('userData'), 'models')
   ].filter(Boolean);
-  ipcMain.handle('ai:status', () => aiStatus(aiModelRoots));
-  ipcMain.handle('ai:semantic-search', async (_event, payload = {}) => {
+  secureHandle('ai:status', () => aiStatus(aiModelRoots));
+  secureHandle('ai:semantic-search', async (_event, payload = {}) => {
     const query = String(payload.query || '').trim();
     const status = aiStatus(aiModelRoots);
     if (!query) return { available: status.available, results: [] };
@@ -272,14 +331,14 @@ function registerIpcHandlers() {
       return { available: false, results: [], reason: String(error?.message || error) };
     }
   });
-  ipcMain.handle('ai:assistant-plan', async (_event, payload = {}) => planCommand(
+  secureHandle('ai:assistant-plan', async (_event, payload = {}) => planCommand(
     String(payload.text || ''),
     aiModelRoots,
     Array.isArray(payload.previousIds) ? payload.previousIds : []
   ));
-  ipcMain.handle('ai:assistant-apply', (_event, payload = {}) => applyProductUpdates(payload.updates || []));
-  ipcMain.handle('ai:assistant-undo', () => undoLastAssistantApply());
-  ipcMain.handle('ai:assistant-export', async (_event, payload = {}) => {
+  secureHandle('ai:assistant-apply', (_event, payload = {}) => applyProductUpdates(payload.updates || []));
+  secureHandle('ai:assistant-undo', () => undoLastAssistantApply());
+  secureHandle('ai:assistant-export', async (_event, payload = {}) => {
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'خروجی CSV دستیار هوشمند',
       defaultPath: String(payload.fileName || `دستیار-هوشمند-${new Date().toISOString().slice(0, 10)}.csv`).replace(/\.csv$/i, '') + '.csv',
@@ -293,7 +352,7 @@ function registerIpcHandlers() {
   });
   const escapeAssistantHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  ipcMain.handle('ai:assistant-export-pdf', async (_event, payload = {}) => {
+  secureHandle('ai:assistant-export-pdf', async (_event, payload = {}) => {
     const rows = Array.isArray(payload.rows) ? payload.rows.filter(Array.isArray) : [];
     if (rows.length < 2) throw new Error('داده‌ای برای خروجی PDF وجود ندارد.');
     const selection = await dialog.showSaveDialog(mainWindow, {
@@ -314,14 +373,14 @@ function registerIpcHandlers() {
     }
     return { canceled: false, filePath: selection.filePath };
   });
-  ipcMain.handle('products:list', (_event, payload = {}) => listProducts(payload.query, payload.categoryId));
-  ipcMain.handle('products:next-code', (_event, categoryId, excludeId = null) => getNextProductCode(categoryId, excludeId));
-  ipcMain.handle('products:check-duplicate', (_event, payload = {}, excludeId = null) => checkProductDuplicate(payload, excludeId));
-  ipcMain.handle('products:create', (_event, payload) => createProduct(payload));
-  ipcMain.handle('products:update', (_event, id, payload) => updateProduct(id, payload));
-  ipcMain.handle('products:quick-update', (_event, id, payload) => updateProductQuick(id, payload));
-  ipcMain.handle('products:set-active', (_event, id, active) => setProductActive(id, active));
-  ipcMain.handle('products:import-preview', async () => {
+  secureHandle('products:list', (_event, payload = {}) => listProducts(payload.query, payload.categoryId));
+  secureHandle('products:next-code', (_event, categoryId, excludeId = null) => getNextProductCode(categoryId, excludeId));
+  secureHandle('products:check-duplicate', (_event, payload = {}, excludeId = null) => checkProductDuplicate(payload, excludeId));
+  secureHandle('products:create', (_event, payload) => createProduct(payload));
+  secureHandle('products:update', (_event, id, payload) => updateProduct(id, payload));
+  secureHandle('products:quick-update', (_event, id, payload) => updateProductQuick(id, payload));
+  secureHandle('products:set-active', (_event, id, active) => setProductActive(id, active));
+  secureHandle('products:import-preview', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: 'انتخاب فایل محصولات',
       properties: ['openFile'],
@@ -335,7 +394,7 @@ function registerIpcHandlers() {
     pendingImports.set(token, { rows: normalized.rows, errors: normalized.errors });
     return { canceled: false, token, sheetName: workbook.sheetName, ...preview, parseErrors: normalized.errors };
   });
-  ipcMain.handle('products:import-confirm', (_event, token, duplicateMode = 'skip') => {
+  secureHandle('products:import-confirm', (_event, token, duplicateMode = 'skip') => {
     const pending = pendingImports.get(String(token));
     if (!pending) throw new Error('پیش‌نمایش ورود منقضی شده است؛ لطفاً فایل را دوباره انتخاب کنید.');
     pendingImports.delete(String(token));
@@ -343,7 +402,7 @@ function registerIpcHandlers() {
     result.errors = [...pending.errors, ...result.errors];
     return result;
   });
-  ipcMain.handle('products:template', async () => {
+  secureHandle('products:template', async () => {
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'ذخیره فایل نمونه محصولات',
       defaultPath: 'نمونه-ورود-محصولات.csv',
@@ -354,7 +413,7 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, csv, 'utf8');
     return { canceled: false, filePath: selection.filePath };
   });
-  ipcMain.handle('products:export', async () => {
+  secureHandle('products:export', async () => {
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'خروجی محصولات',
       defaultPath: 'محصولات.csv',
@@ -374,19 +433,19 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, '\uFEFF' + csvRows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
     return { canceled: false, filePath: selection.filePath, count: rows.length };
   });
-  ipcMain.handle('categories:list', (_event, includeInactive = true) => listCategories(includeInactive));
-  ipcMain.handle('categories:create', (_event, payload) => createCategory(payload));
-  ipcMain.handle('categories:update', (_event, id, payload) => updateCategory(id, payload));
-  ipcMain.handle('categories:set-active', (_event, id, active) => setCategoryActive(id, active));
-  ipcMain.handle('units:list', () => listUnits());
-  ipcMain.handle('units:create', (_event, payload) => createUnit(payload));
-  ipcMain.handle('units:update', (_event, id, payload) => updateUnit(id, payload));
-  ipcMain.handle('units:set-active', (_event, id, active) => setUnitActive(id, active));
-  ipcMain.handle('settings:choose-backup-path', async () => {
+  secureHandle('categories:list', (_event, includeInactive = true) => listCategories(includeInactive));
+  secureHandle('categories:create', (_event, payload) => createCategory(payload));
+  secureHandle('categories:update', (_event, id, payload) => updateCategory(id, payload));
+  secureHandle('categories:set-active', (_event, id, active) => setCategoryActive(id, active));
+  secureHandle('units:list', () => listUnits());
+  secureHandle('units:create', (_event, payload) => createUnit(payload));
+  secureHandle('units:update', (_event, id, payload) => updateUnit(id, payload));
+  secureHandle('units:set-active', (_event, id, active) => setUnitActive(id, active));
+  secureHandle('settings:choose-backup-path', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, { title: 'انتخاب پوشه پشتیبان', properties: ['openDirectory', 'createDirectory'] });
     return selection.canceled || !selection.filePaths[0] ? { canceled: true } : { canceled: false, path: selection.filePaths[0] };
   });
-  ipcMain.handle('settings:backup-now', async (_event, destination) => {
+  secureHandle('settings:backup-now', async (_event, destination) => {
     // A renderer-supplied path is honored only when it matches the configured
     // backup folder or Documents; anything else falls back to the configured
     // folder so a compromised renderer cannot place database copies elsewhere.
@@ -398,8 +457,8 @@ function registerIpcHandlers() {
       : configured;
     return backupDatabase(target);
   });
-  ipcMain.handle('settings:official-start', () => startOfficialUse());
-  ipcMain.handle('settings:restore', async () => {
+  secureHandle('settings:official-start', () => startOfficialUse());
+  secureHandle('settings:restore', async () => {
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: 'بازیابی پشتیبان Acclectron',
       properties: ['openFile'],
@@ -419,13 +478,13 @@ function registerIpcHandlers() {
     getDatabase(app.getPath('userData'));
     return { canceled: false, path: source };
   });
-  ipcMain.handle('customers:search', (_event, query = '') => searchCustomers(query));
-  ipcMain.handle('parties:list', (_event, payload = {}) => listParties(payload.query, payload.type, payload.includeInactive !== false));
-  ipcMain.handle('parties:create', (_event, payload) => createParty(payload));
-  ipcMain.handle('parties:update', (_event, id, payload) => updateParty(id, payload));
-  ipcMain.handle('parties:set-active', (_event, id, active) => setPartyActive(id, active));
-  ipcMain.handle('dashboard:summary', (_event, payload = {}) => getDashboardSummary(payload));
-  ipcMain.handle('notifications:list', (_event, payload = {}) => {
+  secureHandle('customers:search', (_event, query = '') => searchCustomers(query));
+  secureHandle('parties:list', (_event, payload = {}) => listParties(payload.query, payload.type, payload.includeInactive !== false));
+  secureHandle('parties:create', (_event, payload) => createParty(payload));
+  secureHandle('parties:update', (_event, id, payload) => updateParty(id, payload));
+  secureHandle('parties:set-active', (_event, id, active) => setPartyActive(id, active));
+  secureHandle('dashboard:summary', (_event, payload = {}) => getDashboardSummary(payload));
+  secureHandle('notifications:list', (_event, payload = {}) => {
     const result = listNotifications(payload);
     const settings = getAppSettings();
     const backup = settings.backup || {};
@@ -458,8 +517,8 @@ function registerIpcHandlers() {
     };
     return result;
   });
-  ipcMain.handle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
-  ipcMain.handle('reports:export-csv', async (_event, kind, payload = {}) => {
+  secureHandle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
+  secureHandle('reports:export-csv', async (_event, kind, payload = {}) => {
     const report = String(kind) === 'profit-loss' ? getProfitLossReport(payload) : getSalesReport(payload);
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'خروجی Excel گزارش',
@@ -474,7 +533,7 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, '\uFEFF' + rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n') + '\r\n', 'utf8');
     return { canceled: false, filePath: selection.filePath, count: rows.length - 1 };
   });
-  ipcMain.handle('reports:export-pdf', async (_event, payload = {}) => {
+  secureHandle('reports:export-pdf', async (_event, payload = {}) => {
     if (!mainWindow?.webContents) throw new Error('پنجره گزارش آماده نیست.');
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'خروجی PDF گزارش',
@@ -493,56 +552,56 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, data);
     return { canceled: false, filePath: selection.filePath };
   });
-  ipcMain.handle('sales:create', (_event, payload) => createSale(payload));
-  ipcMain.handle('sales:merge-daily', (_event, payload) => mergeDailySales(payload));
-  ipcMain.handle('purchases:create', (_event, payload) => createPurchase(payload));
-  ipcMain.handle('sales:list', (_event, payload) => listSales(payload));
-  ipcMain.handle('purchases:list', (_event, payload) => listPurchases(payload));
-  ipcMain.handle('purchases:price-history', (_event, productId, payload) => getPurchasePriceHistory(productId, payload));
-  ipcMain.handle('invoices:next-number', (_event, kind, date) => getNextInvoiceNumber(kind, date));
-  ipcMain.handle('invoices:details', (_event, kind, id) => getInvoiceDetails(kind, id));
-  ipcMain.handle('invoices:update', (_event, kind, id, payload) => {
+  secureHandle('sales:create', (_event, payload) => createSale(payload));
+  secureHandle('sales:merge-daily', (_event, payload) => mergeDailySales(payload));
+  secureHandle('purchases:create', (_event, payload) => createPurchase(payload));
+  secureHandle('sales:list', (_event, payload) => listSales(payload));
+  secureHandle('purchases:list', (_event, payload) => listPurchases(payload));
+  secureHandle('purchases:price-history', (_event, productId, payload) => getPurchasePriceHistory(productId, payload));
+  secureHandle('invoices:next-number', (_event, kind, date) => getNextInvoiceNumber(kind, date));
+  secureHandle('invoices:details', (_event, kind, id) => getInvoiceDetails(kind, id));
+  secureHandle('invoices:update', (_event, kind, id, payload) => {
     if (kind !== 'sale') throw new Error('ویرایش این نوع فاکتور هنوز پشتیبانی نمی‌شود.');
     return updateSale(id, payload);
   });
-  ipcMain.handle('invoices:settle', (_event, kind, id, payload) => settleInvoice(kind, id, payload));
-  ipcMain.handle('invoices:cancel', (_event, kind, id) => cancelInvoice(kind, id));
-  ipcMain.handle('invoices:set-pinned', (_event, kind, id, pinned) => {
+  secureHandle('invoices:settle', (_event, kind, id, payload) => settleInvoice(kind, id, payload));
+  secureHandle('invoices:cancel', (_event, kind, id) => cancelInvoice(kind, id));
+  secureHandle('invoices:set-pinned', (_event, kind, id, pinned) => {
     if (kind !== 'sale') throw new Error('سنجاق کردن فقط برای فاکتورهای فروش فعال است.');
     return setSalePinned(id, pinned);
   });
-  ipcMain.handle('returns:sale:create', (_event, payload) => createSaleReturn(payload));
-  ipcMain.handle('returns:sale:details', (_event, id) => getSaleReturnDetails(id));
-  ipcMain.handle('returns:sale:list', (_event, payload) => listSalesReturns(payload));
-  ipcMain.handle('returns:sale:cancel', (_event, id) => cancelSaleReturn(id));
-  ipcMain.handle('returns:purchase:create', (_event, payload) => createPurchaseReturn(payload));
-  ipcMain.handle('returns:purchase:details', (_event, id) => getPurchaseReturnDetails(id));
-  ipcMain.handle('returns:purchase:list', (_event, payload) => listPurchaseReturns(payload));
-  ipcMain.handle('returns:purchase:cancel', (_event, id) => cancelPurchaseReturn(id));
-  ipcMain.handle('cash:create', (_event, payload) => createCashTransaction(payload));
-  ipcMain.handle('cash:details', (_event, id) => getCashTransaction(id));
-  ipcMain.handle('cash:list', (_event, payload) => listCashTransactions(payload));
-  ipcMain.handle('cash:summary', (_event, payload) => getCashSummary(payload));
-  ipcMain.handle('parties:ledger', (_event, id, payload) => getPartyLedger(id, payload));
-  ipcMain.handle('inventory:adjust', (_event, id, payload) => adjustProductStock(id, payload));
-  ipcMain.handle('inventory:movements', (_event, payload) => listStockMovements(payload));
-  ipcMain.handle('auth:login', (_event, username, password) => loginUser(username, password));
-  ipcMain.handle('auth:logout', () => logoutUser());
-  ipcMain.handle('auth:current', () => getCurrentUser());
-  ipcMain.handle('users:create', (_event, payload) => createUser(payload));
-  ipcMain.handle('users:list', () => listUsers());
-  ipcMain.handle('users:set-active', (_event, id, active) => setUserActive(id, active));
-  ipcMain.handle('audit:list', (_event, payload) => listAuditLogs(payload));
-  ipcMain.handle('checks:list', (_event, payload) => listChecks(payload));
-  ipcMain.handle('checks:update-status', (_event, id, status, notes) => updateCheckStatus(id, status, notes));
-  ipcMain.handle('installments:create-plan', (_event, payload) => createInstallmentPlan(payload));
-  ipcMain.handle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
-  ipcMain.handle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
-  ipcMain.handle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
-  ipcMain.handle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
-  ipcMain.handle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
-  ipcMain.handle('daily-close:details', (_event, id) => getDailyClosure(id));
-  ipcMain.handle('daily-close:list', (_event, payload) => listDailyClosures(payload));
+  secureHandle('returns:sale:create', (_event, payload) => createSaleReturn(payload));
+  secureHandle('returns:sale:details', (_event, id) => getSaleReturnDetails(id));
+  secureHandle('returns:sale:list', (_event, payload) => listSalesReturns(payload));
+  secureHandle('returns:sale:cancel', (_event, id) => cancelSaleReturn(id));
+  secureHandle('returns:purchase:create', (_event, payload) => createPurchaseReturn(payload));
+  secureHandle('returns:purchase:details', (_event, id) => getPurchaseReturnDetails(id));
+  secureHandle('returns:purchase:list', (_event, payload) => listPurchaseReturns(payload));
+  secureHandle('returns:purchase:cancel', (_event, id) => cancelPurchaseReturn(id));
+  secureHandle('cash:create', (_event, payload) => createCashTransaction(payload));
+  secureHandle('cash:details', (_event, id) => getCashTransaction(id));
+  secureHandle('cash:list', (_event, payload) => listCashTransactions(payload));
+  secureHandle('cash:summary', (_event, payload) => getCashSummary(payload));
+  secureHandle('parties:ledger', (_event, id, payload) => getPartyLedger(id, payload));
+  secureHandle('inventory:adjust', (_event, id, payload) => adjustProductStock(id, payload));
+  secureHandle('inventory:movements', (_event, payload) => listStockMovements(payload));
+  secureHandle('auth:login', (_event, username, password) => loginUser(username, password));
+  secureHandle('auth:logout', () => logoutUser());
+  secureHandle('auth:current', () => getCurrentUser());
+  secureHandle('users:create', (_event, payload) => createUser(payload));
+  secureHandle('users:list', () => listUsers());
+  secureHandle('users:set-active', (_event, id, active) => setUserActive(id, active));
+  secureHandle('audit:list', (_event, payload) => listAuditLogs(payload));
+  secureHandle('checks:list', (_event, payload) => listChecks(payload));
+  secureHandle('checks:update-status', (_event, id, status, notes) => updateCheckStatus(id, status, notes));
+  secureHandle('installments:create-plan', (_event, payload) => createInstallmentPlan(payload));
+  secureHandle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
+  secureHandle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
+  secureHandle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
+  secureHandle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
+  secureHandle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
+  secureHandle('daily-close:details', (_event, id) => getDailyClosure(id));
+  secureHandle('daily-close:list', (_event, payload) => listDailyClosures(payload));
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:toggle-maximize', () => {
     if (!mainWindow) return;
@@ -554,8 +613,8 @@ function registerIpcHandlers() {
     isWindowCloseApproved = true;
     mainWindow?.close();
   });
-  ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
-  ipcMain.handle('window:set-overlay', (_event, payload = {}) => {
+  secureHandle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
+  secureHandle('window:set-overlay', (_event, payload = {}) => {
     if (process.platform !== 'win32' || typeof mainWindow?.setTitleBarOverlay !== 'function') return false;
     try {
       mainWindow.setTitleBarOverlay({

@@ -3,14 +3,17 @@
 
 const { requireDatabase } = require('./core');
 const { refreshInstallmentStatuses } = require('./payments');
+const { jalaliMonthRangeIso, localDateIso } = require('../domain/dates');
 
 function getDashboardSummary(payload = {}) {
   const db = requireDatabase();
   const requestedToday = String(payload.today || '').trim();
   const today = /^\d{4}-\d{2}-\d{2}$/.test(requestedToday)
     ? requestedToday
-    : new Date().toISOString().slice(0, 10);
-  const month = today.slice(0, 7);
+    : localDateIso();
+  // "ماه جاری" follows the Jalali calendar the whole UI displays; stored
+  // dates are Gregorian ISO, so the month is a [from, to] date range.
+  const jalaliMonth = jalaliMonthRangeIso(today);
   const weekStart = new Date(`${today}T00:00:00Z`);
   weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 1) % 7));
   const weekStartIso = weekStart.toISOString().slice(0, 10);
@@ -18,8 +21,8 @@ function getDashboardSummary(payload = {}) {
     "SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS count FROM sales WHERE status = 'active' AND date = ?"
   ).get(today);
   const monthSales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND substr(date, 1, 7) = ?"
-  ).get(month);
+    "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND date >= ? AND date <= ?"
+  ).get(jalaliMonth.from, jalaliMonth.to);
   const yesterday = new Date(`${today}T00:00:00Z`);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const yesterdayIso = yesterday.toISOString().slice(0, 10);
@@ -42,23 +45,25 @@ function getDashboardSummary(payload = {}) {
     WHERE s.status = 'active' AND s.date >= ? AND s.date <= ?
     GROUP BY s.date ORDER BY s.date
   `).all(weekStartIso, today);
+  // Receipts are attributed to the month they were collected, not the
+  // invoice month; paid_at is UTC, so it is converted to the local date.
   const paymentBreakdown = db.prepare(`
     SELECT ip.method, COALESCE(SUM(ip.amount), 0) AS amount
     FROM invoice_payments ip
     LEFT JOIN sales s ON s.id = ip.sale_id
     LEFT JOIN purchases p ON p.id = ip.purchase_id
     WHERE (s.status = 'active' OR p.status = 'completed')
-      AND COALESCE(substr(s.date, 1, 7), substr(p.date, 1, 7)) = ?
+      AND date(ip.paid_at, 'localtime') BETWEEN ? AND ?
     GROUP BY ip.method ORDER BY amount DESC
-  `).all(month);
+  `).all(jalaliMonth.from, jalaliMonth.to);
   const topProducts = db.prepare(`
     SELECT p.name, COALESCE(SUM(si.quantity), 0) AS quantity,
       COALESCE(SUM(si.total), 0) AS netSales
     FROM sale_items si JOIN sales s ON s.id = si.sale_id
     JOIN products p ON p.id = si.product_id
-    WHERE s.status = 'active' AND substr(s.date, 1, 7) = ?
+    WHERE s.status = 'active' AND s.date >= ? AND s.date <= ?
     GROUP BY p.id, p.name ORDER BY quantity DESC, netSales DESC LIMIT 50
-  `).all(month);
+  `).all(jalaliMonth.from, jalaliMonth.to);
   const categorySales = db.prepare(`
     SELECT COALESCE(c.name, 'بدون دسته‌بندی') AS categoryName,
       COALESCE(SUM(si.total), 0) AS netSales,
@@ -67,10 +72,10 @@ function getDashboardSummary(payload = {}) {
     JOIN sales s ON s.id = si.sale_id AND s.status = 'active'
     JOIN products p ON p.id = si.product_id
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE substr(s.date, 1, 7) = ?
+    WHERE s.date >= ? AND s.date <= ?
     GROUP BY c.id, c.name
     ORDER BY netSales DESC LIMIT 8
-  `).all(month);
+  `).all(jalaliMonth.from, jalaliMonth.to);
   const recentSales = db.prepare(`
     SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.source, s.total,
       s.paid_amount AS paidAmount, s.remaining_amount AS remainingAmount,
@@ -91,12 +96,12 @@ function getDashboardSummary(payload = {}) {
   const cashMonth = db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense
-    FROM cash_transactions WHERE substr(date, 1, 7) = ?
-  `).get(month);
+    FROM cash_transactions WHERE date >= ? AND date <= ?
+  `).get(jalaliMonth.from, jalaliMonth.to);
   const monthProfit = db.prepare(`
     SELECT COALESCE(SUM(total - tax - cost_total), 0) AS profit
-    FROM sales WHERE status = 'active' AND substr(date, 1, 7) = ?
-  `).get(month);
+    FROM sales WHERE status = 'active' AND date >= ? AND date <= ?
+  `).get(jalaliMonth.from, jalaliMonth.to);
   const receivables = db.prepare(`
     SELECT COALESCE(SUM(remaining_amount), 0) AS amount
     FROM sales WHERE status = 'active' AND remaining_amount > 0

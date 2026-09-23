@@ -28,7 +28,6 @@ $appFiles = @(
   'index.html',
   'main.js',
   'preload.js',
-  'renderer.js',
   'styles.css',
   'package.json',
   'assets',

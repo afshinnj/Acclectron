@@ -73,8 +73,9 @@ npm run release
 | --- | --- |
 | `main.js` | فرایند اصلی Electron و پنجرهٔ برنامه |
 | `preload.js` | API امن بین رابط کاربری و فرایند اصلی |
-| `renderer.js` / `styles.css` | رابط کاربری فارسی |
-| `src/main/database.js` | لایهٔ SQLite و عملیات داده |
+| `src/renderer/` | رابط کاربری فارسی (به‌ترتیب بارگذاری در index.html) |
+| `styles.css` | استایل رابط کاربری |
+| `src/main/database.js` | فاشاد لایهٔ داده؛ پیاده‌سازی در `src/main/db/` |
 | `src/main/domain/` | منطق دامنه، ازجمله فروش و مرجوعی |
 | `test/` | آزمون‌های خودکار |
 | `docs/` | دفترچهٔ راهنما و تصاویر آموزشی |

@@ -39,6 +39,12 @@ document.addEventListener('click', async (event) => {
 document.addEventListener('submit', (event) => {
   if (event.target?.id === 'loginForm') event.preventDefault();
 }, true);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target?.closest?.('#loginForm')) {
+    event.preventDefault();
+    $('#loginSubmit')?.click();
+  }
+}, true);
 // Data loads that run at boot are rejected before login by the main-process
 // IPC guard; re-run them once a session actually exists.
 function refreshAfterLogin() {
@@ -48,9 +54,12 @@ function refreshAfterLogin() {
 let uiCurrency = { code: 'IRR', name: '\u0631\u06cc\u0627\u0644', symbol: '\u0631\u06cc\u0627\u0644', position: 'suffix', decimals: 0, separator: true, inputUnit: 'rial' };
 let defaultSettlementMethod = 'cash';
 let uiTheme = 'dark';
+let uiThemePreference = 'dark';
 let uiCalendar = 'jalali';
 let uiNotifications = true;
 let uiShortcuts = true;
+let systemThemeMediaQuery;
+let systemThemeListenerBound = false;
 
 function applyAppearanceSettings(appearance = {}) {
   const previousCalendar = uiCalendar;
@@ -61,10 +70,21 @@ function applyAppearanceSettings(appearance = {}) {
     ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
     : theme;
   uiTheme = resolvedTheme;
+  uiThemePreference = theme;
   uiCalendar = 'jalali';
   uiNotifications = appearance.notifications !== false;
   uiShortcuts = appearance.shortcuts !== false;
   document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.dataset.themeMode = theme;
+  if (!systemThemeMediaQuery && window.matchMedia) systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+  if (systemThemeMediaQuery && !systemThemeListenerBound) {
+    const refreshSystemTheme = () => {
+      if (uiThemePreference === 'system') applyAppearanceSettings({ theme: 'system', notifications: uiNotifications, shortcuts: uiShortcuts, fontScale: Number(document.documentElement.style.getPropertyValue('--font-scale') || 1) * 100 });
+    };
+    if (systemThemeMediaQuery.addEventListener) systemThemeMediaQuery.addEventListener('change', refreshSystemTheme);
+    else systemThemeMediaQuery.addListener?.(refreshSystemTheme);
+    systemThemeListenerBound = true;
+  }
   // Keep the native Windows 11 caption buttons in sync with the active theme.
   const overlayColors = {
     dark: { color: '#111b2b', symbolColor: '#dbe7f5' },
@@ -278,10 +298,10 @@ async function requestApplicationClose() {
   if (applicationClosePromptOpen) return;
   applicationClosePromptOpen = true;
   const confirmed = await showConfirmDialog({
-    eyebrow: 'بستن برنامه',
-    title: 'از بستن نرم‌افزار مطمئن هستید؟',
-    message: 'سبد فروش روزانهٔ ثبت‌نشده به‌صورت موقت ذخیره می‌شود و در اجرای بعدی قابل بازیابی است.',
-    confirmText: 'بستن نرم‌افزار',
+    eyebrow: 'کوچک کردن به سیستم‌تری',
+    title: 'نرم‌افزار در سیستم‌تری نگه داشته شود؟',
+    message: 'سبد فروش روزانهٔ ثبت‌نشده به‌صورت موقت ذخیره می‌شود و در اجرای بعدی قابل بازیابی است. برای خروج کامل، از منوی سیستم‌تری «خروج کامل» را انتخاب کنید.',
+    confirmText: 'کوچک کردن به سیستم‌تری',
     destructive: true
   });
   applicationClosePromptOpen = false;
@@ -370,9 +390,59 @@ function initializeDashboardMarkup() {
     <div class="dashboard-alert-strip"><div><strong>هشدارهای فوری</strong><small id="dashboardAlertHint">در حال بررسی...</small></div><button id="dashboardAlertsButton" class="secondary">مشاهده اعلان‌ها</button></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small id="dashboardSalesTrendRange">هفته جاری</small></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش بر اساس دسته‌بندی</h3><small>ماه جاری</small></div><div id="dashboardCategoryChart" class="dashboard-bars"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>وضعیت نقدینگی ماه</h3><small>دریافت و هزینه</small></div><div id="dashboardCashChart" class="dashboard-bars"></div></section></div>
-    <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>`;
+    <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>
+    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود</span><strong id="dashboardReportProfit">۰</strong></div><div><span>تعداد فاکتور</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دوره</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div><div class="dashboard-forecast-box"><div class="panel-heading"><div><h3>پیش‌بینی فروش آینده</h3><small id="dashboardForecastNote">بر اساس روند ماه‌های اخیر</small></div><div class="dashboard-report-controls"><select id="dashboardForecastPeriod"><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><select id="dashboardForecastHorizon"><option value="3">۳ دوره</option><option value="6">۶ دوره</option><option value="12">۱۲ دوره</option></select></div></div><div id="dashboardForecastChart" class="dashboard-report-chart"></div></div></section>`;
   $('#refreshDashboard').onclick = () => { renderDashboardSkeleton(); window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true)); };
   $('#dashboardAlertsButton').onclick = () => $('#notificationButton')?.click();
+  $('#dashboardReportPeriod').onchange = loadDashboardSalesPanel;
+  $('#dashboardForecastPeriod').onchange = loadDashboardForecast;
+  $('#dashboardForecastHorizon').onchange = loadDashboardForecast;
+  $('#dashboardReportOpen').onclick = () => setManagedPage('reports');
+  loadDashboardSalesPanel();
+  loadDashboardForecast();
+}
+
+async function loadDashboardForecast() {
+  const chart = $('#dashboardForecastChart');
+  if (!chart) return;
+  try {
+    const period = $('#dashboardForecastPeriod')?.value || 'month';
+    const horizon = Number($('#dashboardForecastHorizon')?.value || 3);
+    const data = await window.api.reports.forecast({ period, horizon });
+    const history = (data.history || []).map((row) => ({ ...row, date: row.period, forecast: 0 }));
+    const predictions = (data.predictions || []).map((row) => ({ ...row, date: row.period, forecast: row.netSales }));
+    reportSvgLine(chart, [...history, ...predictions], [{ key: 'netSales', label: 'فروش واقعی/پیش‌بینی', color: '#fbbf24' }, { key: 'forecast', label: 'پیش‌بینی', color: '#c084fc' }]);
+    $('#dashboardForecastNote').textContent = `${data.note} · اطمینان: ${data.confidence}`;
+  } catch {
+    chart.innerHTML = '<div class="empty-state compact">پیش‌بینی برای این بازه در دسترس نیست.</div>';
+  }
+}
+
+async function loadDashboardSalesPanel() {
+  const chart = $('#dashboardReportChart');
+  if (!chart) return;
+  try {
+    const period = $('#dashboardReportPeriod')?.value || 'month';
+    const data = await window.api.reports.sales({ period });
+    const rows = data.byPeriod || [];
+    const totalSales = rows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
+    const totalProfit = rows.reduce((sum, row) => sum + Number(row.profitTotal || 0), 0);
+    const latest = rows.length ? Number(rows[rows.length - 1].netSales || 0) : 0;
+    const previous = rows.length > 1 ? Number(rows[rows.length - 2].netSales || 0) : 0;
+    const growth = previous ? ((latest - previous) / previous) * 100 : null;
+    const labels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
+    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${rows.length} دوره`;
+    $('#dashboardReportSales').textContent = money(totalSales);
+    $('#dashboardReportProfit').textContent = money(totalProfit);
+    $('#dashboardReportProfit').classList.toggle('negative', totalProfit < 0);
+    $('#dashboardReportInvoices').textContent = new Intl.NumberFormat('fa-IR').format(Number(data.summary?.invoiceCount || 0));
+    $('#dashboardReportGrowth').textContent = growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`;
+    $('#dashboardReportGrowth').classList.toggle('negative', growth !== null && growth < 0);
+    const chartRows = rows.map((row) => ({ ...row, date: row.period }));
+    reportSvgLine(chart, chartRows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
+  } catch (error) {
+    chart.innerHTML = '<div class="empty-state compact">داده‌ای برای داشبورد تحلیلی وجود ندارد.</div>';
+  }
 }
 
 function renderDashboardSkeleton() {
@@ -520,6 +590,8 @@ function renderDashboard(summary) {
   const dashboardTopProducts = [...(summary.topProducts || [])].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
   $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
   document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
+  loadDashboardSalesPanel();
+  loadDashboardForecast();
 }
 
 function renderResults() {

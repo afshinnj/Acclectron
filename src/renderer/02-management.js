@@ -275,7 +275,8 @@ function openManagementModal(kind, record = null, options = {}) {
   if (kind === 'product') {
     $('#productModalTitle').textContent = record ? 'ویرایش کالا' : 'ثبت کالای جدید'; $('#productId').value = record?.id || '';
     $('#productForm').dataset.originalCategoryId = record?.categoryId || '';
-    [['productName', record?.name], ['productCode', record?.code], ['productBarcode', record?.barcode], ['productPurchasePrice', record ? formatPriceInput(record.purchasePrice) : formatPriceInput(0)], ['productWholesalePrice', record ? formatPriceInput(record.wholesalePrice) : formatPriceInput(0)], ['productRetailPrice', record ? formatPriceInput(record.salePrice) : formatPriceInput(0)], ['productStock', record?.stock ?? 0], ['productMinimumStock', record?.minimumStock ?? 0], ['productDescription', record?.description || '']].forEach(([id, value]) => { $(`#${id}`).value = value ?? ''; });
+    const productRetailPrice = record?.retailPrice ?? record?.salePrice ?? 0;
+    [['productName', record?.name], ['productCode', record?.code], ['productBarcode', record?.barcode], ['productPurchasePrice', record ? formatPriceInput(record.purchasePrice) : formatPriceInput(0)], ['productWholesalePrice', record ? formatPriceInput(record.wholesalePrice) : formatPriceInput(0)], ['productRetailPrice', record ? formatPriceInput(productRetailPrice) : formatPriceInput(0)], ['productStock', record?.stock ?? 0], ['productMinimumStock', record?.minimumStock ?? 0], ['productDescription', record?.description || '']].forEach(([id, value]) => { $(`#${id}`).value = value ?? ''; });
     // Entering a purchase price refreshes wholesale/retail automatically; a manual
     // edit of either field switches that field back to manual for this session.
     productSellingPriceAuto = { wholesale: true, retail: true };
@@ -351,6 +352,20 @@ async function openProductForInvoice(kind, index) {
     // database refresh is unavailable.
   }
   openManagementModal('product', null, { invoiceTarget: { kind, index } });
+}
+async function openProductForEdit(id) {
+  let record = managementState.products.find((product) => product.id === Number(id));
+  const hasPrices = record && ['purchasePrice', 'wholesalePrice'].every((key) => record[key] !== undefined)
+    && (record.salePrice !== undefined || record.retailPrice !== undefined);
+  if (!hasPrices) {
+    try {
+      const products = await window.api.products.list({ query: '', categoryId: '' });
+      record = products.find((product) => product.id === Number(id)) || record;
+    } catch (error) {
+      showToast(readableError(error, 'اطلاعات کالا بارگذاری نشد.'), true);
+    }
+  }
+  if (record) openManagementModal('product', record);
 }
 let productSellingPriceAuto = { wholesale: true, retail: true };
 function setupProductPriceFields() {
@@ -573,7 +588,7 @@ function bindManagementEvents() {
   };
   $('#productName').addEventListener('blur', checkProductDuplicateOnBlur);
   $('#productBarcode').addEventListener('blur', checkProductDuplicateOnBlur);
-  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } const invoiceProduct = event.target.closest('.invoice-new-product'); if (invoiceProduct) { const kind = invoiceProduct.dataset.kind; const emptyRow = invoiceState[kind].items.findIndex((item) => !item.productId); openProductForInvoice(kind, emptyRow >= 0 ? emptyRow : invoiceState[kind].items.length - 1); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]') || event.target.id === 'managementModalBackdrop') closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openManagementModal('product', managementState.products.find((p) => p.id === Number(editProduct.dataset.id))); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
+  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } const invoiceProduct = event.target.closest('.invoice-new-product'); if (invoiceProduct) { const kind = invoiceProduct.dataset.kind; const emptyRow = invoiceState[kind].items.findIndex((item) => !item.productId); openProductForInvoice(kind, emptyRow >= 0 ? emptyRow : invoiceState[kind].items.length - 1); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]') || event.target.id === 'managementModalBackdrop') closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openProductForEdit(editProduct.dataset.id); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
   ['productsFilter', 'productCategoryFilter', 'showInactiveProducts'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedProducts)); ['categoriesFilter', 'showInactiveCategories'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedCategories)); ['partiesFilter', 'partyTypeFilter', 'showInactiveParties'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedParties)); $('#productCategory').addEventListener('change', updateProductCodePreview); $('#productPurchasePrice').addEventListener('input', updateProductSellingPrices); $('#productWholesalePrice').addEventListener('input', () => { productSellingPriceAuto.wholesale = false; }); $('#productRetailPrice').addEventListener('input', () => { productSellingPriceAuto.retail = false; });
   $('#productForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -839,7 +854,8 @@ async function renderProductDetailsTab(tab, product) {
   content.innerHTML = '<div class="empty-state compact">در حال بارگذاری...</div>';
   try {
     if (tab === 'prices') {
-      const rows = await window.api.purchases.priceHistory(product.id, { limit: 50 });
+      const response = await window.api.purchases.priceHistory(product.id, { limit: 50 });
+      const rows = Array.isArray(response) ? response : (response?.items || []);
       content.innerHTML = rows?.length ? `<table class="details-table"><thead><tr><th>تاریخ</th><th>تأمین‌کننده</th><th>قیمت واحد</th><th>تعداد</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${dateTimeToJalali(row.date || row.createdAt)}</td><td>${esc(row.partyName || row.supplierName || '—')}</td><td>${money(row.unitPrice || row.purchasePrice || 0)}</td><td>${esc(row.quantity ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">تاریخچه قیمتی ثبت نشده است.</div>';
     } else {
       const rows = await window.api.inventory.movements({ productId: product.id });

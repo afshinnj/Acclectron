@@ -1,3 +1,36 @@
+let quickPinIdleTimer;
+let quickPinLocked = false;
+let quickPinMonitorStarted = false;
+
+function ensureQuickPinLockUI() {
+  if ($('#quickPinBackdrop')) return;
+  document.body.insertAdjacentHTML('beforeend', '<div id="quickPinBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:380px"><div class="modal-header"><div><span class="eyebrow">قفل سریع</span><h3>برنامه قفل شد</h3></div></div><form id="quickPinForm"><p>برای ادامه PIN سریع خود را وارد کنید.</p><label>PIN سریع<input id="quickPinInput" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" required></label><div id="quickPinError" class="form-error hidden"></div><button class="primary wide" type="submit">بازکردن قفل</button><button id="quickPinFullLogin" class="secondary wide" type="button">ورود با رمز عبور</button></form></div></div>');
+  $('#quickPinForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try { await window.api.auth.quickPin.unlock($('#quickPinInput').value); quickPinLocked = false; $('#quickPinInput').value = ''; $('#quickPinBackdrop').classList.add('hidden'); resetQuickPinIdleTimer(); }
+    catch (error) { const box = $('#quickPinError'); box.textContent = readableError(error, 'بازکردن قفل ناموفق بود.'); box.classList.remove('hidden'); }
+  });
+  $('#quickPinFullLogin').addEventListener('click', () => { quickPinLocked = true; clearTimeout(quickPinIdleTimer); $('#quickPinBackdrop').classList.add('hidden'); $('#loginBackdrop').classList.remove('hidden'); $('#loginPassword')?.focus(); });
+}
+
+function resetQuickPinIdleTimer() {
+  clearTimeout(quickPinIdleTimer);
+  if (quickPinLocked) return;
+  quickPinIdleTimer = setTimeout(async () => {
+    try { const status = await window.api.auth.quickPin.status(); if (status.enabled) { quickPinLocked = true; ensureQuickPinLockUI(); $('#quickPinBackdrop').classList.remove('hidden'); $('#quickPinInput').focus(); } } catch {}
+  }, 15 * 60 * 1000);
+}
+
+function startQuickPinIdleMonitor() {
+  ensureQuickPinLockUI();
+  if (!quickPinMonitorStarted) {
+    quickPinMonitorStarted = true;
+    ['mousemove', 'mousedown', 'keydown', 'touchstart'].forEach((type) => document.addEventListener(type, resetQuickPinIdleTimer, { passive: true }));
+  }
+  quickPinLocked = false;
+  resetQuickPinIdleTimer();
+}
+
 async function initializeAuth() {
   initializeOperationsPages();
   const backdrop = $('#loginBackdrop');
@@ -10,7 +43,7 @@ async function initializeAuth() {
   } catch {}
   try {
     const current = await window.api.auth.current();
-    if (current) { backdrop.classList.add('hidden'); return; }
+    if (current) { backdrop.classList.add('hidden'); startQuickPinIdleMonitor(); return; }
   } catch {}
 }
 
@@ -27,6 +60,7 @@ function installLoginSubmitGuard() {
       showToast('ورود موفق بود.');
       warnDefaultPassword(session);
       refreshAfterLogin();
+      startQuickPinIdleMonitor();
     } catch (e) {
       if (error) {
         error.textContent = readableError(e, 'ورود ناموفق بود.');

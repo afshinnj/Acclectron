@@ -53,7 +53,19 @@ contextBridge.exposeInMainWorld('api', {
     login: (username, password) => ipcRenderer.invoke('auth:login', username, password),
     logout: () => ipcRenderer.invoke('auth:logout'),
     current: () => ipcRenderer.invoke('auth:current'),
-    changePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth:change-password', currentPassword, newPassword)
+    changePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth:change-password', currentPassword, newPassword),
+    windowsHello: {
+      registrationOptions: () => ipcRenderer.invoke('auth:webauthn:registration-options'),
+      registrationVerify: (response) => ipcRenderer.invoke('auth:webauthn:registration-verify', response),
+      authenticationOptions: (username) => ipcRenderer.invoke('auth:webauthn:authentication-options', username),
+      authenticationVerify: (username, response) => ipcRenderer.invoke('auth:webauthn:authentication-verify', username, response)
+    },
+    quickPin: {
+      set: (pin, currentPassword) => ipcRenderer.invoke('auth:quick-pin:set', pin, currentPassword),
+      clear: (currentPassword) => ipcRenderer.invoke('auth:quick-pin:clear', currentPassword),
+      status: () => ipcRenderer.invoke('auth:quick-pin:status'),
+      unlock: (pin) => ipcRenderer.invoke('auth:quick-pin:unlock', pin)
+    }
   },
   users: {
     create: (payload) => ipcRenderer.invoke('users:create', payload),
@@ -80,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   reports: {
     sales: (payload) => ipcRenderer.invoke('reports:sales', payload),
+    forecast: (payload) => ipcRenderer.invoke('reports:forecast', payload),
     exportCsv: (kind, payload) => ipcRenderer.invoke('reports:export-csv', kind, payload),
     exportPdf: (payload) => ipcRenderer.invoke('reports:export-pdf', payload)
   },

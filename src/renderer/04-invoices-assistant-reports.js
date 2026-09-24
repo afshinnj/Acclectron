@@ -1121,6 +1121,7 @@ function initializeReportsPage() {
         <label>از تاریخ<input id="reportFrom" class="report-date" type="date"></label>
         <label>تا تاریخ<input id="reportTo" class="report-date" type="date"></label>
         <label>نوع فروش<select id="reportSource"><option value="">همه فروش‌ها</option><option value="daily">فروش روزانه</option><option value="invoice">فاکتور فروش</option></select></label>
+        <label>دورهٔ تجمیع<select id="reportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month">ماهانه</option><option value="year">سالانه</option></select></label>
         <button id="reportApply" class="primary" type="button">اعمال فیلتر</button>
       </div>
       <div id="reportError" class="form-error hidden"></div>
@@ -1131,8 +1132,9 @@ function initializeReportsPage() {
         <div class="metric-card"><span>تعداد کالا</span><strong id="reportItems">۰</strong><small id="reportSources">روزانه: ۰ | فاکتور: ۰</small></div>
       </div>
       <div id="reportAdjustments" class="report-adjustments"></div>
+      <div id="reportComparison" class="report-adjustments report-comparison"></div>
       <div class="report-grid">
-        <section class="panel report-chart-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small>بر اساس روز</small></div><div id="reportTrendChart" class="report-chart"></div></section>
+        <section class="panel report-chart-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small id="reportTrendNote">بر اساس روز</small></div><div id="reportTrendChart" class="report-chart"></div></section>
         <section class="panel report-chart-panel"><div class="panel-heading"><h3>پیش‌بینی فروش</h3><small id="reportForecastNote">میانگین متحرک ۷ روزه</small></div><div id="reportForecastChart" class="report-chart"></div></section>
       </div>
       <div class="report-grid">
@@ -1151,7 +1153,7 @@ function initializeReportsPage() {
       const result = await window.api.reports.exportCsv('sales', {
         from: reportDateValue('reportFrom'),
         to: reportDateValue('reportTo'),
-        source: $('#reportSource')?.value || ''
+        source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day'
       });
       if (!result?.canceled) showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
     } catch (e) { showToast(readableError(e, 'خروجی Excel ناموفق بود.'), true); }
@@ -1184,6 +1186,21 @@ function reportDateValue(id) {
   return parts.length === 3 ? jalaliToGregorian(parts[0], parts[1], parts[2]) : '';
 }
 
+// Top-level copy of the Persian-digit mapper: reportPeriodLabel runs in the
+// global scope, where the nested helper inside renderDashboard is not visible.
+const toPersianDigits = (value) => String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+
+function reportPeriodLabel(value) {
+  const period = String(value || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(period)) return toPersianDigits(reportIsoToJalali(period).slice(5));
+  if (/^\d{4}-\d{2}$/.test(period)) {
+    const jalali = reportIsoToJalali(`${period}-01`).split('/');
+    return toPersianDigits(`${jalali[0]}/${jalali[1]}`);
+  }
+  if (/^\d{4}$/.test(period)) return toPersianDigits(String(gregorianToJalali(Number(period), 1, 1)[0]));
+  return period;
+}
+
 function reportSvgLine(container, points, series) {
   if (!container) return;
   if (!points.length) { container.innerHTML = '<div class="empty-state compact">برای بازه انتخاب‌شده داده‌ای وجود ندارد.</div>'; return; }
@@ -1197,7 +1214,7 @@ function reportSvgLine(container, points, series) {
   const grid = [0.25, 0.5, 0.75].map((ratio) => `<line x1="${pad}" y1="${y(min + range * ratio)}" x2="${width - pad}" y2="${y(min + range * ratio)}" class="chart-grid"/>`).join('')
     + (min < 0 ? `<line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" class="chart-zero"/>` : '');
   const paths = series.map((s) => `<polyline points="${points.map((p, i) => `${x(i)},${y(p[s.key])}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
-  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(p.date)) ? reportIsoToJalali(p.date).slice(5) : String(p.date))}</text>` : '')).join('');
+  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${esc(reportPeriodLabel(p.date))}</text>` : '')).join('');
   const legend = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
   container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img">${grid}${paths}${labels}</svg><div class="chart-legend">${legend}</div>`;
 }
@@ -1236,7 +1253,7 @@ async function loadSalesReport() {
   if (!error) return;
   error.classList.add('hidden');
   try {
-    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: $('#reportSource')?.value || '' });
+    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day' });
     const s = data.summary || {};
     $('#reportNetSales').textContent = money(s.netSales);
     $('#reportInvoiceCount').textContent = `${new Intl.NumberFormat('fa-IR').format(Number(s.invoiceCount || 0))} فاکتور`;
@@ -1248,8 +1265,19 @@ async function loadSalesReport() {
     $('#reportItems').textContent = new Intl.NumberFormat('fa-IR').format(Number(s.itemCount || 0));
     $('#reportSources').textContent = `روزانه: ${Number(s.dailyCount || 0)} | فاکتور: ${Number(s.formalCount || 0)}`;
     $('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${money(s.subtotal)}</span><span>تخفیف: ${money(s.discount)}</span><span>مالیات: ${money(s.tax)} (در سود لحاظ نشده)</span>`;
+    const periodLabels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
+    const period = data.period || $('#reportPeriod')?.value || 'day';
+    const periodRows = data.byPeriod || [];
+    const periodTotal = periodRows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
+    const previousPeriodTotal = periodRows.length > 1 ? Number(periodRows[periodRows.length - 2].netSales || 0) : 0;
+    const latestPeriodTotal = periodRows.length ? Number(periodRows[periodRows.length - 1].netSales || 0) : 0;
+    const growth = previousPeriodTotal ? ((latestPeriodTotal - previousPeriodTotal) / previousPeriodTotal) * 100 : null;
+    const average = periodRows.length ? periodTotal / periodRows.length : 0;
+    $('#reportComparison').innerHTML = `<span>تجمیع: <b>${periodLabels[period]}</b></span><span>میانگین هر دوره: ${money(average)}</span><span>رشد آخرین دوره: <b class="${growth !== null && growth < 0 ? 'negative' : ''}">${growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`}</b></span>`;
+    $('#reportTrendNote').textContent = `تجمیع ${periodLabels[period]}`;
     const daily = reportFillDates(data.byDate || []);
-    reportSvgLine($('#reportTrendChart'), daily, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
+    const trendRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
+    reportSvgLine($('#reportTrendChart'), trendRows, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
     const recent = daily.slice(-7);
     const avg = recent.length ? recent.reduce((sum, row) => sum + Number(row.netSales || 0), 0) / recent.length : 0;
     const forecast = Array.from({ length: 7 }, (_, i) => ({ date: `پیش‌بینی ${i + 1}`, netSales: avg, profitTotal: avg * (Number(s.profitTotal || 0) / Math.max(1, Number(s.netSales || 0))) }));
@@ -1262,7 +1290,8 @@ async function loadSalesReport() {
       secondaryValueKey: 'quantity',
       secondaryLabel: 'عدد فروش'
     });
-    $('#reportDailyTable').innerHTML = daily.length ? `<table><thead><tr><th>تاریخ</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th></tr></thead><tbody>${daily.slice().reverse().map((row) => `<tr><td>${esc(reportIsoToJalali(row.date))}</td><td>${money(row.netSales)}</td><td>${money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
+    const tableRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
+    $('#reportDailyTable').innerHTML = tableRows.length ? `<table><thead><tr><th>${periodLabels[period]}</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th><th>میانگین فاکتور</th></tr></thead><tbody>${tableRows.slice().reverse().map((row) => `<tr><td>${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(row.date)) ? reportIsoToJalali(row.date) : String(row.date))}</td><td>${money(row.netSales)}</td><td>${money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td><td>${money(Number(row.invoiceCount || 0) ? Number(row.netSales || 0) / Number(row.invoiceCount) : 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
     $('#reportCustomerTable').innerHTML = (data.byCustomer || []).length ? `<table><thead><tr><th>مشتری</th><th>فروش</th><th>سود</th></tr></thead><tbody>${data.byCustomer.map((row) => `<tr><td>${esc(row.customerName)}</td><td>${money(row.total)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
   } catch (err) {
     error.textContent = err.message || 'دریافت گزارش ناموفق بود.';

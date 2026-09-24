@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } = require('electron');
 // Some Windows GPU drivers terminate Electron immediately with
 // "GPU state invalid..." before the login window is usable.
 app.disableHardwareAcceleration();
@@ -85,7 +85,16 @@ const {
   listInstallmentPlans,
   recordInstallmentPayment,
   changeCurrentUserPassword,
-  userUsesDefaultPassword
+  userUsesDefaultPassword,
+  getSalesForecast,
+  beginWindowsHelloRegistration,
+  finishWindowsHelloRegistration,
+  beginWindowsHelloAuthentication,
+  finishWindowsHelloAuthentication,
+  setQuickPin,
+  clearQuickPin,
+  getQuickPinStatus,
+  unlockWithQuickPin
 } = require('./src/main/database');
 const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
 const { planCommand, applyProductUpdates, undoLastAssistantApply } = require('./src/main/ai/assistant');
@@ -118,6 +127,8 @@ process.on('uncaughtException', (error) => appendProcessLog('uncaughtException',
 process.on('unhandledRejection', (reason) => appendProcessLog('unhandledRejection', reason));
 
 let mainWindow;
+let tray;
+let isQuitting = false;
 let isWindowCloseApproved = false;
 let autoBackupTimer;
 const pendingImports = new Map();
@@ -154,6 +165,14 @@ function registerIpcHandlers() {
     'auth:login',
     'auth:current',
     'auth:logout',
+    // Windows Hello authentication replaces the password prompt on the login
+    // screen, so its options/verify pair must stay reachable before login.
+    'auth:webauthn:authentication-options',
+    'auth:webauthn:authentication-verify',
+    // The Quick PIN status/unlock pair guards an already-established session
+    // and must remain callable from the lock screen.
+    'auth:quick-pin:status',
+    'auth:quick-pin:unlock',
     // Boot configuration (appearance, passwordless-login flag) is read while
     // the login screen is still up; it exposes no business records.
     'settings:get',
@@ -179,6 +198,7 @@ function registerIpcHandlers() {
     'parties:update': 'parties',
     'parties:set-active': 'parties',
     'reports:sales': 'reports',
+    'reports:forecast': 'reports',
     'reports:export-csv': 'reports',
     'reports:export-pdf': 'reports',
     'profit-loss:report': 'reports',
@@ -204,7 +224,11 @@ function registerIpcHandlers() {
     return handler(event, ...args);
   });
   secureHandle('settings:get', () => getAppSettings());
-  secureHandle('settings:save', (_event, payload) => saveAppSettings(payload));
+  secureHandle('settings:save', (_event, payload) => {
+    const settings = saveAppSettings(payload);
+    applyStartupSetting(settings.appearance?.startup);
+    return settings;
+  });
   secureHandle('settings:printers', async () => {
     if (!mainWindow?.webContents?.getPrintersAsync) return [];
     const printers = await mainWindow.webContents.getPrintersAsync();
@@ -518,6 +542,7 @@ function registerIpcHandlers() {
     return result;
   });
   secureHandle('reports:sales', (_event, payload = {}) => getSalesReport(payload));
+  secureHandle('reports:forecast', (_event, payload = {}) => getSalesForecast(payload));
   secureHandle('reports:export-csv', async (_event, kind, payload = {}) => {
     const report = String(kind) === 'profit-loss' ? getProfitLossReport(payload) : getSalesReport(payload);
     const selection = await dialog.showSaveDialog(mainWindow, {
@@ -598,6 +623,14 @@ function registerIpcHandlers() {
   secureHandle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
   secureHandle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
   secureHandle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
+  secureHandle('auth:webauthn:registration-options', () => beginWindowsHelloRegistration());
+  secureHandle('auth:webauthn:registration-verify', (_event, response) => finishWindowsHelloRegistration(response));
+  secureHandle('auth:webauthn:authentication-options', (_event, username) => beginWindowsHelloAuthentication(username));
+  secureHandle('auth:webauthn:authentication-verify', (_event, username, response) => finishWindowsHelloAuthentication(username, response));
+  secureHandle('auth:quick-pin:set', (_event, pin, currentPassword) => setQuickPin(pin, currentPassword));
+  secureHandle('auth:quick-pin:clear', (_event, currentPassword) => clearQuickPin(currentPassword));
+  secureHandle('auth:quick-pin:status', () => getQuickPinStatus());
+  secureHandle('auth:quick-pin:unlock', (_event, pin) => unlockWithQuickPin(pin));
   secureHandle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
   secureHandle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
   secureHandle('daily-close:details', (_event, id) => getDailyClosure(id));
@@ -611,7 +644,12 @@ function registerIpcHandlers() {
   ipcMain.on('window:close', () => mainWindow?.webContents.send('window:close-requested'));
   ipcMain.on('window:close-confirmed', () => {
     isWindowCloseApproved = true;
-    mainWindow?.close();
+    // Confirmed close minimises to the system tray rather than terminating;
+    // "خروج کامل" in the tray context menu is the only true exit path.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+      mainWindow.setSkipTaskbar(true);
+    }
   });
   secureHandle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
   secureHandle('window:set-overlay', (_event, payload = {}) => {
@@ -722,7 +760,7 @@ const createWindow = () => {
   });
   mainWindow.loadFile('index.html');
   mainWindow.on('close', (event) => {
-    if (isWindowCloseApproved) return;
+    if (isQuitting || isWindowCloseApproved) return;
     // A crashed renderer can never confirm the close flow; without this the
     // window would deadlock and only Task Manager could end the process.
     if (mainWindow.webContents.isCrashed()) {
@@ -738,6 +776,35 @@ const createWindow = () => {
   });
 };
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setSkipTaskbar(false);
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createSystemTray() {
+  if (tray) return;
+  const source = nativeImage.createFromPath(appIconPath);
+  tray = new Tray(source.isEmpty() ? nativeImage.createEmpty() : source.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Acclectron');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'نمایش Acclectron', click: showMainWindow },
+    { type: 'separator' },
+    { label: 'خروج کامل', click: () => { isQuitting = true; app.quit(); } }
+  ]));
+  tray.on('click', showMainWindow);
+}
+
+function applyStartupSetting(enabled) {
+  if (process.platform !== 'win32' || typeof app.setLoginItemSettings !== 'function') return;
+  app.setLoginItemSettings({
+    openAtLogin: Boolean(enabled),
+    path: process.execPath,
+    args: app.isPackaged ? [] : [app.getAppPath()]
+  });
+}
+
 // A second instance would write to the same SQLite file concurrently; hand
 // focus back to the running window instead of opening a second one.
 if (!app.requestSingleInstanceLock()) {
@@ -745,15 +812,16 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    showMainWindow();
   });
 }
 
 app.whenReady().then(() => {
   getDatabase(app.getPath('userData'));
   registerIpcHandlers();
+  applyStartupSetting(getAppSettings().appearance?.startup);
   createWindow();
+  createSystemTray();
   runAutoBackupIfDue();
   autoBackupTimer = setInterval(runAutoBackupIfDue, 60 * 1000);
   pruneOldLogs();
@@ -764,10 +832,15 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   isWindowCloseApproved = true;
   if (autoBackupTimer) clearInterval(autoBackupTimer);
+  tray?.destroy();
+  tray = null;
   closeDatabase();
 });
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Hiding to the tray leaves no visible window; only a requested full exit
+  // should terminate the application.
+  if (isQuitting && process.platform !== 'darwin') app.quit();
 });

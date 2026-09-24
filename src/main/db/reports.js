@@ -3,6 +3,7 @@
 
 const { requireDatabase } = require('./core');
 const { refreshInstallmentStatuses } = require('./payments');
+const { buildSalesForecast } = require('../domain/forecast');
 const { jalaliMonthRangeIso, localDateIso } = require('../domain/dates');
 
 function getDashboardSummary(payload = {}) {
@@ -250,6 +251,7 @@ function getSalesReport(payload = {}) {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.from || '')) ? String(payload.from) : '';
   const to = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.to || '')) ? String(payload.to) : '';
   const source = ['daily', 'invoice'].includes(String(payload.source || '')) ? String(payload.source) : '';
+  const period = ['day', 'week', 'month', 'year'].includes(String(payload.period || '')) ? String(payload.period) : 'day';
   const conditions = ["s.status = 'active'"];
   const params = [];
   if (from) { conditions.push('s.date >= ?'); params.push(from); }
@@ -284,6 +286,27 @@ function getSalesReport(payload = {}) {
       COALESCE(SUM(CASE WHEN s.source = 'invoice' THEN 1 ELSE 0 END), 0) AS formalCount
     FROM sales s WHERE ${where}
     GROUP BY s.date ORDER BY s.date
+  `).all(...params);
+  const periodExpression = {
+    day: 's.date',
+    week: "date(s.date, '-' || ((CAST(strftime('%w', s.date) AS INTEGER) + 1) % 7) || ' days')",
+    month: "substr(s.date, 1, 7)",
+    year: "substr(s.date, 1, 4)"
+  }[period];
+  const byPeriod = db.prepare(`
+    SELECT ${periodExpression} AS period,
+      COUNT(*) AS invoiceCount,
+      COALESCE(SUM(s.item_count), 0) AS itemCount,
+      COALESCE(SUM(s.total), 0) AS total,
+      COALESCE(SUM(CASE WHEN s.total > s.tax THEN s.total - s.tax ELSE 0 END), 0) AS netSales,
+      COALESCE(SUM(s.cost_total), 0) AS costTotal,
+      COALESCE(SUM(CASE WHEN s.total > s.tax THEN s.total - s.tax ELSE 0 END - s.cost_total), 0) AS profitTotal,
+      COALESCE(SUM(s.paid_amount), 0) AS paidAmount,
+      COALESCE(SUM(s.remaining_amount), 0) AS remainingAmount,
+      COALESCE(SUM(CASE WHEN s.source = 'daily' THEN 1 ELSE 0 END), 0) AS dailyCount,
+      COALESCE(SUM(CASE WHEN s.source = 'invoice' THEN 1 ELSE 0 END), 0) AS formalCount
+    FROM sales s WHERE ${where}
+    GROUP BY ${periodExpression} ORDER BY period
   `).all(...params);
   const bySource = db.prepare(`
     SELECT s.source,
@@ -330,13 +353,21 @@ function getSalesReport(payload = {}) {
     Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value) : value])
   ));
   return {
-    filters: { from, to, source },
+    filters: { from, to, source, period },
+    period,
     summary: castRows([summary])[0],
     byDate: castRows(byDate),
+    byPeriod: castRows(byPeriod),
     bySource: castRows(bySource),
     byProduct: castRows(byProduct),
     byCustomer: castRows(byCustomer)
   };
+}
+
+function getSalesForecast(payload = {}) {
+  const period = String(payload.period || '') === 'year' ? 'year' : 'month';
+  const report = getSalesReport({ period, source: payload.source });
+  return buildSalesForecast(report.byPeriod, { period, horizon: payload.horizon });
 }
 
 function getProfitLossReport(payload = {}) {
@@ -412,4 +443,4 @@ function getProfitLossReport(payload = {}) {
   };
 }
 
-module.exports = { getDashboardSummary, getProfitLossReport, getSalesReport, listNotifications };
+module.exports = { getDashboardSummary, getProfitLossReport, getSalesReport, getSalesForecast, listNotifications };

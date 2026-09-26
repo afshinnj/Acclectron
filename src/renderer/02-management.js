@@ -172,7 +172,12 @@ function initializeManagementMarkup() {
   });
   managementState.ready = true;
   bindManagementEvents();
-  initializeSalesMarkup();
+  // Resolved at call time: 04-invoices-assistant-reports.js loads later and
+  // supersedes this file's partial initializer with the full one that also
+  // builds the keyboard-invoice sections (salesInvoicePage, purchasesPage and
+  // the invoice list pages). Calling our own partial version here would leave
+  // #salesPage flagged as redesigned and make the full initializer bail out.
+  (typeof initializeSalesMarkupFinal === 'function' ? initializeSalesMarkupFinal : initializeSalesMarkupLegacy)();
 }
 
 function groupSidebarMenu(className, label, icon, pages) {
@@ -208,7 +213,12 @@ function initializeSidebarGroups() {
   groupSidebarMenu('system-menu', 'گزارش و مدیریت', '⚙', ['users', 'reports', 'settings']);
 }
 
-function initializeSalesMarkup() {
+// Named distinctly from 04-invoices-assistant-reports.js's initializeSalesMarkup:
+// in the original monolith a single hoisted declaration won, but as separate
+// <script> tags this duplicate global declaration would shadow the full
+// initializer (which builds the keyboard-invoice pages) for any caller that
+// resolves the name before chunk 04 has loaded.
+function initializeSalesMarkupLegacy() {
   const page = $('#salesPage');
   if (!page || page.dataset.redesigned) return;
   page.innerHTML = `<div class="page-heading daily-sale-heading"><div><span class="eyebrow">عملیات فروش</span><h2>ثبت فروش روزانه</h2><div class="daily-sale-shortcuts"><kbd>F2</kbd> جست‌وجو <kbd>Enter</kbd> افزودن <kbd>F9</kbd> ثبت فروش</div></div><label class="sale-date-field daily-sale-date-field"><span class="sale-date-caption"><i aria-hidden="true">◷</i>تاریخ فروش</span><input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>افزودن کالا</h3><small>بارکد را اسکن کنید یا نام، کد و بارکد را جست‌وجو کنید.</small></div><div class="toolbar-search daily-sale-search"><span>⌕</span><input id="saleProductFilter" placeholder="اسکن بارکد یا جست‌وجوی کالا" autocomplete="off"><kbd>F2</kbd></div></div><div class="daily-sale-hint">با اسکن دوبارهٔ یک کالا، تعداد همان ردیف افزایش پیدا می‌کند.</div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th>قیمت</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-summary"><div><span>اقلام</span><strong id="cartItemCount">۰</strong></div><div><span>مبلغ کل</span><strong id="modernSaleTotal">${money(0)}</strong></div></div><div id="modernSaleError" class="form-error hidden"></div><div class="daily-sale-actions"><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش <kbd>F9</kbd></button><button id="modernSaveSalePrint" class="secondary wide" type="button">ثبت و چاپ</button></div></aside></div>`;
@@ -645,8 +655,12 @@ function bindManagementEvents() {
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeManagementModal(); });
 }
 
-initializeManagementMarkup();
-setManagedPage('dashboard');
+// Deferred to the end of 07-auth-boot.js. These used to run here, but the
+// renderer split into separate <script> tags changed the resolution order:
+// initializeManagementMarkup() calls initializeSalesMarkupFinal(), which is
+// declared in 04-invoices-assistant-reports.js and did not exist yet at this
+// point in load order. In the original monolith a single hoisted declaration
+// was visible everywhere before any of this ran.
 
 let productBarcodeBuffer = '';
 let productBarcodeStartedAt = 0;
@@ -1254,7 +1268,10 @@ function initializeSettingsPage() {
 const originalManagedPageForSettings = setManagedPage;
 setManagedPage = function setManagedPageWithSettings(page) {
   initializeSettingsPage();
-  originalManagedPageForSettings(page);
+  // Resolved at call time: 04-invoices-assistant-reports.js loads later and
+  // provides the full page router (all managed pages), which supersedes the
+  // partial router defined earlier in this file.
+  (typeof setPageRouter === 'function' ? setPageRouter : originalManagedPageForSettings)(page);
   if (page === 'settings') {
     $('#settingsPage')?.classList.remove('hidden');
     $('#placeholderPage')?.classList.add('hidden');

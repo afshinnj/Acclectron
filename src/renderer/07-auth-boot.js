@@ -165,6 +165,16 @@ bindJalaliDatePickers(true);
 installLoginSubmitGuard();
 initializeAuth();
 
+// Boot the managed pages now that every chunk has loaded. This call and the
+// initial setManagedPage('dashboard') used to live at the bottom of
+// 02-management.js, but the renderer split into separate <script> tags means
+// 04-invoices-assistant-reports.js (which supplies the full
+// initializeSalesMarkupFinal that builds the keyboard-invoice pages) had not
+// loaded yet at that point. Running them here reproduces the original
+// monolith's hoisting order, where all declarations existed before boot.
+initializeManagementMarkup();
+setManagedPage('dashboard');
+
 // Add restore action to the existing backup settings tab.
 const backupPanel = document.querySelector('[data-settings-panel="backup"] .modal-actions');
 if (backupPanel && !$('#v2Restore')) {

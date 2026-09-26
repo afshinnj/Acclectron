@@ -922,7 +922,11 @@ function enhanceDailySalesMarkup(page) {
   }
 }
 
-function initializeSalesMarkup() { restoreDailySalesMarkup(); invoiceMarkupAndBind(); }
+// Named distinctly from 02-management.js's initializeSalesMarkupLegacy: in the
+// original monolith a single hoisted declaration won, but as separate
+// <script> tags the duplicate name would let this file's declaration shadow
+// the partial initializer for callers that resolve the name too early.
+function initializeSalesMarkupFinal() { restoreDailySalesMarkup(); invoiceMarkupAndBind(); }
 function initializeAssistantPage() {
   if ($('#assistantPage')) return;
   $('#placeholderPage')?.insertAdjacentHTML('beforebegin', `
@@ -1080,8 +1084,17 @@ if (assistantNavTarget && !document.querySelector('[data-page="assistant"]')) {
   assistantNavTarget.insertAdjacentHTML('beforeend', '<button class="nav-item" data-page="assistant"><span>✦</span><span class="nav-label">دستیار هوشمند</span></button>');
 }
 
-function setManagedPage(page) {
+// Named distinctly from the 02-management setManagedPage: in the original
+// monolith a single hoisted function declaration won, but as separate
+// <script> tags this duplicate global declaration would clobber the settings
+// wrapper assigned in 02-management.js. 02 calls this by name at page-click
+// time (after every chunk has loaded).
+function setPageRouter(page) {
   initializeManagementMarkup();
+  // Lazy page markup must be created before the visibility toggle below runs,
+  // otherwise the freshly-created section keeps its initial "hidden" class
+  // and the first visit renders an empty content area.
+  if (page === 'assistant') initializeAssistantPage();
   const titles = { dashboard: 'داشبورد', sales: 'فروش روزانه', 'sales-invoice': 'فاکتور فروش', purchases: 'فاکتور خرید', 'sales-invoices': 'فاکتورهای فروش', 'purchase-invoices': 'فاکتورهای خرید', products: 'مدیریت کالاها', categories: 'دسته‌بندی‌ها', customers: 'مدیریت مشتریان', ledger: 'گردش حساب', inventory: 'انبارگردانی', returns: 'مرجوعی‌ها', checks: 'چک‌ها و سررسیدها', installments: 'مدیریت اقساط', cash: 'صندوق و هزینه‌ها', 'profit-loss': 'سود و زیان', users: 'کاربران و لاگ', reports: 'گزارش‌ها', assistant: 'دستیار هوشمند', settings: 'تنظیمات' };
   const view = page === 'customers' ? 'parties' : page;
   const pageId = view === 'sales-invoice' ? 'salesInvoice' : view === 'sales-invoices' ? 'salesInvoices' : view === 'purchase-invoices' ? 'purchaseInvoices' : view === 'profit-loss' ? 'profitLoss' : view;
@@ -1105,7 +1118,6 @@ function setManagedPage(page) {
   if (page === 'purchases') loadKeyboardInvoice('purchase').catch(() => {});
   if (page === 'sales-invoices') loadInvoiceList('sales'); if (page === 'purchase-invoices') loadInvoiceList('purchases');
   if (page === 'reports') loadSalesReport();
-  if (page === 'assistant') initializeAssistantPage();
 }
 
 function initializeReportsPage() {

@@ -19,6 +19,13 @@ function newInvoiceItem(kind) {
   };
 }
 
+// هر دو نوع فاکتور (فروش و خرید) یک ردیف ورود خالی در بالای لیست دارند که
+// محصول در آن تایپ یا اسکن می‌شود؛ ردیف‌های پایین فقط‌خواندنی هستند. این
+// ردیف هم در ثبت و هم در ویرایش فاکتور یکسان است.
+function invoiceHasEntryRow(kind) {
+  return kind === 'sale' || kind === 'purchase';
+}
+
 function enhanceInvoiceMeta(kind, page) {
   const id = kind === 'sale' ? 'sale' : 'purchase';
   const heading = page.querySelector('.page-heading');
@@ -184,6 +191,9 @@ async function editInvoice(kind, id) {
       unitPrice: Number(item.unit_price || 0), discount: Number(item.discount || 0), priceType: item.price_type || 'retail'
     };
   });
+  // ردیف ورود خالی بالای لیست، درست مثل حالت ثبت فاکتور جدید: محصول جدید
+  // در آن تایپ/اسکن می‌شود و ردیف‌های موجود پایین آن فقط‌خواندنی می‌مانند.
+  state.items.unshift(newInvoiceItem('sale'));
   state.payments = invoice.payments.map((payment) => ({
     method: payment.method, amount: Number(payment.amount || 0), checkNumber: payment.check_number || '',
     bankName: payment.bank_name || '', dueDate: payment.due_date || ''
@@ -350,7 +360,7 @@ async function loadKeyboardInvoice(kind) {
 function renderKeyboardItems(kind, focus) {
   const state = invoiceState[kind]; const body = $(`#${kind}InvoiceItems`);
   body.innerHTML = state.items.map((item, index) => {
-    const hasEntryRow = kind === 'purchase' || (kind === 'sale' && !state.editingId);
+    const hasEntryRow = invoiceHasEntryRow(kind);
     if (hasEntryRow && index > 0) {
       return `<tr class="invoice-committed-row" data-index="${index}"><td><strong>${esc(item.name)}</strong><small>${esc(item.code)}</small></td><td>${Math.max(1, Math.round(Number(item.quantity) || 1))}</td><td>${money(item.unitPrice)}</td><td>${money(item.discount)}</td><td class="line-total">${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-kind="${kind}" data-index="${index}" title="حذف">×</button></td></tr>`;
     }
@@ -501,7 +511,7 @@ function commitSaleEntry() {
 
 function keyboardInvoiceTotals(kind) {
   const state = invoiceState[kind];
-  const invoiceItems = (kind === 'purchase' || (kind === 'sale' && !state.editingId)) ? state.items.slice(1) : state.items;
+  const invoiceItems = invoiceHasEntryRow(kind) ? state.items.slice(1) : state.items;
   const subtotal = invoiceItems.reduce((sum, item) => sum + Math.max(0, item.quantity * item.unitPrice - item.discount), 0);
   const discount = parsePriceInput($(`#${kind}Discount`).value); const tax = parsePriceInput($(`#${kind}Tax`).value);
   return { subtotal, discount, tax, total: Math.max(0, subtotal - discount + tax) };
@@ -523,7 +533,7 @@ function showKeyboardSuggestions(kind, index) {
 
 function chooseKeyboardProduct(kind, index, product) {
   if (!product) return; const state = invoiceState[kind]; const item = state.items[index];
-  const isEntryRow = index === 0 && (kind === 'purchase' || (kind === 'sale' && !state.editingId));
+  const isEntryRow = index === 0 && invoiceHasEntryRow(kind);
   Object.assign(item, { productId: product.id, name: product.name, code: product.code, query: product.name, stock: product.stock, retailPrice: product.salePrice, wholesalePrice: product.wholesalePrice, purchasePrice: product.purchasePrice, unitPrice: kind === 'purchase' ? 0 : product.salePrice, priceType: kind === 'purchase' ? 'purchase' : 'retail' });
   if (kind === 'purchase') Object.assign(item, { purchasePriceOptions: [] });
   if (isEntryRow) {
@@ -543,7 +553,7 @@ function chooseKeyboardProduct(kind, index, product) {
 }
 
 function addKeyboardRow(kind) {
-  if (kind === 'purchase' || (kind === 'sale' && !invoiceState.sale.editingId)) {
+  if (invoiceHasEntryRow(kind)) {
     renderKeyboardItems(kind, { index: 0, className: 'invoice-product-input' });
     return;
   }
@@ -595,7 +605,7 @@ async function saveKeyboardInvoice(kind, print = false) {
     // مبلغی که در کادر پرداخت وارد شده، حتی اگر کاربر دکمهٔ «افزودن پرداخت»
     // را نزده باشد، باید همراه فاکتور ثبت شود.
     addKeyboardPayment(kind, { throwOnError: true, silent: true });
-    const items = state.items.filter((item, index) => item.productId && (kind === 'purchase' || (kind === 'sale' && !state.editingId) ? index > 0 : true)).map((item) => ({
+    const items = state.items.filter((item, index) => item.productId && (invoiceHasEntryRow(kind) ? index > 0 : true)).map((item) => ({
       productId: item.productId,
       quantity: item.quantity,
       // createPurchase receives persisted monetary values in cents, while
@@ -716,7 +726,7 @@ function bindKeyboardInvoices() {
           item.purchasePriceActiveIndex = -1;
           renderPurchasePriceSuggestions(item, index);
         }
-      } else if (event.key === 'Enter' && kind === 'sale' && !invoiceState.sale.editingId
+      } else if (event.key === 'Enter' && kind === 'sale'
         && (t.classList.contains('invoice-price-combo') || t.classList.contains('invoice-price-custom'))) {
         event.preventDefault();
         commitSaleEntry();
@@ -739,7 +749,7 @@ function bindKeyboardInvoices() {
       if (event.ctrlKey && event.key === 'Delete') {
         event.preventDefault();
         const state = invoiceState[kind];
-        if ((kind === 'purchase' || (kind === 'sale' && !state.editingId)) && index === 0) {
+        if (invoiceHasEntryRow(kind) && index === 0) {
           state.items[0] = newInvoiceItem(kind);
           renderKeyboardItems(kind, { index: 0, className: 'invoice-product-input' });
         } else {
@@ -802,7 +812,7 @@ function bindKeyboardInvoices() {
       if (remove) {
         const kind = remove.dataset.kind;
         const state = invoiceState[kind];
-        if ((kind === 'purchase' || (kind === 'sale' && !state.editingId)) && Number(remove.dataset.index) === 0) return;
+        if (invoiceHasEntryRow(kind) && Number(remove.dataset.index) === 0) return;
         state.items.splice(Number(remove.dataset.index), 1);
         if (!state.items.length) state.items.push(newInvoiceItem(kind));
         if (kind === 'purchase' && state.items[0]?.productId) state.items.unshift(newInvoiceItem('purchase'));

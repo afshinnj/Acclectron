@@ -60,10 +60,14 @@ function initializeSettingsPageV2() {
   $('#v2Unit').addEventListener('submit', async (e) => { e.preventDefault(); try { const p = { name: $('#v2UnitName').value, symbol: $('#v2UnitSymbol').value, decimals: Number($('#v2UnitDecimals').value || 0), conversionFactor: Number($('#v2UnitFactor').value || 1), allowFraction: $('#v2UnitFraction').checked }; const id = $('#v2UnitId').value; if (id) await window.api.units.update(Number(id), p); else await window.api.units.create(p); $('#v2Unit').reset(); $('#v2UnitFactor').value = 1; $('#v2UnitId').value = ''; managementState.units = await window.api.units.list(); renderUnits(); showToast('\u0648\u0627\u062d\u062f \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.'); } catch (e) { showToast(e.message, true); } });
   $('#v2UnitCancel').addEventListener('click', () => { $('#v2Unit').reset(); $('#v2UnitId').value = ''; $('#v2UnitFactor').value = 1; });
   $('#settingsPage').addEventListener('click', (e) => { const b = e.target.closest('.v2-edit-unit'); if (!b) return; const u = managementState.units.find((x) => x.id === Number(b.dataset.id)); if (!u) return; $('#v2UnitId').value = u.id; $('#v2UnitName').value = u.name; $('#v2UnitSymbol').value = u.symbol || ''; $('#v2UnitDecimals').value = u.decimals || 0; $('#v2UnitFactor').value = u.conversionFactor || 1; $('#v2UnitFraction').checked = Boolean(u.allowFraction); });
-  load().then(() => {
+  // The units table and printer list come from guarded channels, so the boot
+  // copy is rejected before login. refreshAfterLogin() re-runs this after a
+  // session exists; skip it here rather than surfacing a login error as a toast.
+  refreshSettingsData = () => load().then(() => {
     $('#v2Orientation').value = settings.print?.orientation || 'portrait';
     $('#v2ShowUnit').checked = settings.print?.showUnit !== false;
   }).catch((e) => showToast(e.message, true));
+  if (sessionReady) refreshSettingsData();
 }
 initializeSettingsPage = initializeSettingsPageV2;
 initializeSettingsPageV2();

@@ -91,7 +91,9 @@ function invoiceMarkupAndBind() {
   page.dataset.keyboardInvoice = '1';
   bindKeyboardInvoices();
   bindInvoiceLists();
-  loadKeyboardInvoice('sale'); loadKeyboardInvoice('purchase');
+  // Catalogue reads are guarded; the boot copy is rejected before login and
+  // re-issued by refreshAfterLogin, so keep the boot start quiet.
+  if (sessionReady) { loadKeyboardInvoice('sale'); loadKeyboardInvoice('purchase'); }
 }
 
 function invoiceListMarkup(kind) {
@@ -901,7 +903,9 @@ function restoreDailySalesMarkup() {
   refreshDailySaleCurrencyLabels();
   bindSalesEvents();
   bindJalaliDatePickers();
-  loadSaleProducts();
+  // Before login the IPC guard rejects this; refreshAfterLogin re-issues it
+  // after a session exists and setPageRouter('sales') re-reads on entry.
+  if (sessionReady) loadSaleProducts();
 }
 
 function enhanceDailySalesMarkup(page) {
@@ -1124,6 +1128,10 @@ function setPageRouter(page) {
   productMenu?.querySelector('.product-menu-toggle')?.setAttribute('aria-expanded', String(productPage || productMenu?.classList.contains('open')));
   $('#pageTitle').textContent = titles[page] || page; $('#windowContext').textContent = titles[page] || page;
   if (page === 'products') loadManagedProducts(); if (page === 'categories') loadManagedCategories(); if (page === 'customers') loadManagedParties();
+  // The product grid is seeded once at boot, but its first load runs before
+  // login and is rejected by the IPC guard; stock and prices also change with
+  // every sale/purchase/return, so re-read the catalogue on every entry.
+  if (page === 'sales') loadSaleProducts().catch(() => {});
   if (page === 'sales-invoice') loadKeyboardInvoice('sale').catch(() => {});
   if (page === 'purchases') loadKeyboardInvoice('purchase').catch(() => {});
   if (page === 'sales-invoices') loadInvoiceList('sales'); if (page === 'purchase-invoices') loadInvoiceList('purchases');
@@ -1286,7 +1294,7 @@ async function loadSalesReport() {
     $('#reportRemaining').textContent = `مانده: ${money(s.remainingAmount)}`;
     $('#reportItems').textContent = new Intl.NumberFormat('fa-IR').format(Number(s.itemCount || 0));
     $('#reportSources').textContent = `روزانه: ${Number(s.dailyCount || 0)} | فاکتور: ${Number(s.formalCount || 0)}`;
-    $('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${money(s.subtotal)}</span><span>تخفیف: ${money(s.discount)}</span><span>مالیات: ${money(s.tax)} (در سود لحاظ نشده)</span>`;
+    $('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${money(s.subtotal)}</span><span>تخفیف: ${money(s.discount)}</span>${Number(s.returnsCount || 0) ? `<span>مرجوعی‌ها: ${money(s.returnsTotal)} (${new Intl.NumberFormat('fa-IR').format(Number(s.returnsCount || 0))} رسید، از فروش کسر شد)</span>` : ''}<span>مالیات: ${money(s.tax)} (در سود لحاظ نشده)</span>`;
     const periodLabels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
     const period = data.period || $('#reportPeriod')?.value || 'day';
     const periodRows = data.byPeriod || [];
@@ -1300,11 +1308,22 @@ async function loadSalesReport() {
     const daily = reportFillDates(data.byDate || []);
     const trendRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
     reportSvgLine($('#reportTrendChart'), trendRows, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
-    const recent = daily.slice(-7);
-    const avg = recent.length ? recent.reduce((sum, row) => sum + Number(row.netSales || 0), 0) / recent.length : 0;
-    const forecast = Array.from({ length: 7 }, (_, i) => ({ date: `پیش‌بینی ${i + 1}`, netSales: avg, profitTotal: avg * (Number(s.profitTotal || 0) / Math.max(1, Number(s.netSales || 0))) }));
-    reportSvgLine($('#reportForecastChart'), forecast, [{ key: 'netSales', label: 'فروش پیش‌بینی‌شده', color: '#fbbf24' }]);
-    $('#reportForecastNote').textContent = recent.length >= 3 ? `میانگین ۷ روز اخیر: ${money(avg)} در روز` : 'داده کافی برای پیش‌بینی وجود ندارد';
+    // The reports page reuses the same weighted-linear forecast the dashboard
+    // shows, instead of a flat average, so the two never disagree. The single
+    // line continues from actual months into the forecasted ones.
+    const forecastChart = $('#reportForecastChart');
+    if (forecastChart) {
+      try {
+        const forecastData = await window.api.reports.forecast({ period: 'month', horizon: 3 });
+        const historyRows = (forecastData.history || []).map((row) => ({ date: row.period, netSales: row.netSales }));
+        const predictionRows = (forecastData.predictions || []).map((row) => ({ date: row.period, netSales: row.netSales }));
+        reportSvgLine(forecastChart, [...historyRows, ...predictionRows], [{ key: 'netSales', label: 'فروش واقعی / پیش‌بینی‌شده', color: '#fbbf24' }]);
+        $('#reportForecastNote').textContent = `${forecastData.note} · اطمینان: ${forecastData.confidence}`;
+      } catch {
+        forecastChart.innerHTML = '<div class="empty-state compact">داده کافی برای پیش‌بینی وجود ندارد.</div>';
+        $('#reportForecastNote').textContent = 'داده کافی برای پیش‌بینی وجود ندارد';
+      }
+    }
     const sourceRows = (data.bySource || []).map((row) => ({ ...row, sourceLabel: row.source === 'daily' ? 'فروش روزانه' : 'فاکتور فروش' }));
     reportSvgBars($('#reportSourceChart'), sourceRows, 'netSales', 'sourceLabel', '#c084fc');
     reportSvgBars($('#reportProductChart'), data.byProduct || [], 'quantity', 'name', '#6ee7b7', {
@@ -1324,6 +1343,6 @@ async function loadSalesReport() {
 initializeReportsPage();
 initializeNotifications();
 initializeInstallmentNavigation();
-loadNotifications().catch(() => {});
-setInterval(() => loadNotifications().catch(() => {}), 5 * 60 * 1000);
+if (sessionReady) loadNotifications().catch(() => {});
+setInterval(() => { if (sessionReady) loadNotifications().catch(() => {}); }, 5 * 60 * 1000);
 

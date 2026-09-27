@@ -43,7 +43,14 @@ async function initializeAuth() {
   } catch {}
   try {
     const current = await window.api.auth.current();
-    if (current) { backdrop.classList.add('hidden'); startQuickPinIdleMonitor(); return; }
+    if (current) {
+      backdrop.classList.add('hidden');
+      startQuickPinIdleMonitor();
+      // A session already exists (e.g. restored by a future persistence layer);
+      // the boot data probes were skipped, so load them now.
+      refreshAfterLogin();
+      return;
+    }
   } catch {}
 }
 

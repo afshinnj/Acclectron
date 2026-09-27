@@ -462,6 +462,26 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .delete-line:hover{background:#4b252f;color:#ffc1c4}
 .toast{max-width:min(460px,calc(100vw - 50px));box-shadow:0 12px 32px #050b15aa;line-height:1.6}
 :root[data-theme="light"] .table-wrap tbody tr:not(.empty-row):hover{background:#edf4fa}
+
+/* Light mode: the dark base paints popovers and a few inset surfaces in navy.
+   Every floating layer must resolve to a white/elevated surface instead. */
+:root[data-theme="light"] .results,
+:root[data-theme="light"] .invoice-suggestions,
+:root[data-theme="light"] .party-suggestions,
+:root[data-theme="light"] .inventory-product-suggestions,
+:root[data-theme="light"] .jalali-datepicker{background:#fff;border-color:#cbd5e1;color:#1e293b}
+:root[data-theme="light"] .result-item,
+:root[data-theme="light"] .invoice-suggestion,
+:root[data-theme="light"] .party-suggestion{background:#fff}
+:root[data-theme="light"] .jalali-datepicker-head button{background:#e7edf4;color:#334155}
+:root[data-theme="light"] .notification-item{background:#fff;border-color:#cbd5e1;color:#1e293b}
+:root[data-theme="light"] .notification-item:hover{background:#eef4fa}
+:root[data-theme="light"] .price-combo,
+:root[data-theme="light"] .invoice-price-combo,
+:root[data-theme="light"] .product-profit-preview{background:#fff;border-color:#b8c6d6;color:#1e293b}
+:root[data-theme="light"] .invoice-meta-fields .sale-date-field input{background:#fff;color:#1e293b;border-color:#b8c6d6}
+:root[data-theme="light"] select option{background:#fff;color:#1e293b}
+:root[data-theme="light"] .table-action:hover{background:#dbeafe;color:#075985}
 :root[data-theme="light"] .table-action:hover{background:#dcecf8;color:#075985}
 :root[data-theme="light"] .table-action.danger:hover,:root[data-theme="light"] .delete-line:hover{background:#fce8eb;color:#a3293d}
 /* Keep invoice date metadata visually consistent with the invoice number field. */
@@ -1263,6 +1283,21 @@ td .skeleton.line-skeleton{height:13px;width:62%;margin:0 auto}
   --win-text:#1f1f1f;--win-text-secondary:#454545;--win-text-muted:#666666;--win-border:#d6d6d6;
   --win-accent:#0067c0;--win-accent-strong:#005fb8;--win-success:#107c10;--win-warning:#9d5d00;--win-danger:#c42b1c;
   --win-focus:0 0 0 2px #ffffff,0 0 0 4px var(--win-accent);--win-shadow-1:0 2px 8px rgba(0,0,0,.12);--win-shadow-2:0 16px 48px rgba(0,0,0,.18);
+}
+/* The Fluent surface tokens follow the active theme so the chrome (titlebar,
+   sidebar, panels, modals) stays in the same family as the components that
+   predate this layer and still carry the original per-theme values. */
+:root[data-theme="dark"]{
+  --win-bg:#0b1120;--win-surface:#111a2b;--win-surface-subtle:#0e1727;--win-surface-elevated:#16233a;
+  --win-text:#f8fafc;--win-text-secondary:#9aabc0;--win-text-muted:#71829a;--win-border:#25334b;
+  --win-accent:#38bdf8;--win-accent-strong:#0284c7;--win-success:#49d4a7;--win-warning:#ffb75c;--win-danger:#e5747b;
+  --win-focus:0 0 0 2px #0b1120,0 0 0 4px var(--win-accent);--win-shadow-1:0 2px 8px rgba(0,0,0,.35);--win-shadow-2:0 16px 48px rgba(0,0,0,.5);
+}
+:root[data-theme="hacker"]{
+  --win-bg:#020a05;--win-surface:#051408;--win-surface-subtle:#07240f;--win-surface-elevated:#0a2e18;
+  --win-text:#e2ffe9;--win-text-secondary:#8af1c6;--win-text-muted:#57bd7d;--win-border:#123f23;
+  --win-accent:#00ff66;--win-accent-strong:#0ea552;--win-success:#49d4a7;--win-warning:#ffd166;--win-danger:#ff6b7a;
+  --win-focus:0 0 0 2px #020a05,0 0 0 4px var(--win-accent);--win-shadow-1:0 2px 8px rgba(0,0,0,.45);--win-shadow-2:0 16px 48px rgba(0,0,0,.6);
 }
 html,body{font-family:"Segoe UI Variable","Segoe UI",Tahoma,sans-serif;font-size:14px;line-height:1.45;background:var(--win-bg);color:var(--win-text)}
 body{letter-spacing:0;scrollbar-color:var(--win-border) transparent}

@@ -47,9 +47,30 @@ document.addEventListener('keydown', (event) => {
 }, true);
 // Data loads that run at boot are rejected before login by the main-process
 // IPC guard; re-run them once a session actually exists.
+// Read-only data probes (catalogue, dashboard charts, settings, units, AI
+// status) are seeded while the login screen is still up, and the main-process
+// IPC guard rejects every one of them. The boot copies of those probes check
+// this flag and stay quiet; refreshAfterLogin() flips it and re-runs them all
+// once a session actually exists.
+let sessionReady = false;
 function refreshAfterLogin() {
+  sessionReady = true;
   loadNotifications().catch(() => {});
+  // The daily-sales product grid is populated at boot, before any session
+  // exists, so the IPC guard rejects that first load. Re-fetch it now that a
+  // session is available, otherwise the grid stays empty until a manual search.
+  if ($('#saleProductCards')) loadSaleProducts().catch(() => {});
   window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
+  // The keyboard-invoice catalogues, the settings page (units table, printer
+  // list) and the semantic-search probe are likewise rejected before login and
+  // only ever load from here.
+  if ($('#salesInvoicePage')) {
+    loadKeyboardInvoice('sale').catch(() => {});
+    loadKeyboardInvoice('purchase').catch(() => {});
+  }
+  if (typeof refreshSettingsData === 'function') refreshSettingsData().catch(() => {});
+  if (typeof refreshSemanticStatus === 'function') refreshSemanticStatus();
+  refreshDailySaleCurrencyLabels();
 }
 let uiCurrency = { code: 'IRR', name: '\u0631\u06cc\u0627\u0644', symbol: '\u0631\u06cc\u0627\u0644', position: 'suffix', decimals: 0, separator: true, inputUnit: 'rial' };
 let defaultSettlementMethod = 'cash';
@@ -86,12 +107,37 @@ function applyAppearanceSettings(appearance = {}) {
     systemThemeListenerBound = true;
   }
   // Keep the native Windows 11 caption buttons in sync with the active theme.
-  const overlayColors = {
-    dark: { color: '#111b2b', symbolColor: '#dbe7f5' },
+  // The overlay is drawn by the OS over the HTML titlebar, so it must reuse the
+  // exact colours the CSS produced rather than a hardcoded second copy of them.
+  const overlayFallback = {
+    dark: { color: '#111a2b', symbolColor: '#dbe4f0' },
     light: { color: '#ffffff', symbolColor: '#3b4a5f' },
-    hacker: { color: '#04120a', symbolColor: '#d6ffe3' }
+    hacker: { color: '#051408', symbolColor: '#d6ffe3' }
   };
-  window.api?.window?.setOverlay?.(overlayColors[resolvedTheme] || overlayColors.dark)?.catch?.(() => {});
+  const rgbToHex = (value) => {
+    const channels = String(value || '').match(/\d+(?:\.\d+)?/g);
+    if (!channels) return null;
+    return '#' + channels.slice(0, 3)
+      .map((c) => Math.round(Number(c)).toString(16).padStart(2, '0')).join('');
+  };
+  const syncCaptionOverlay = () => {
+    const fallback = overlayFallback[resolvedTheme] || overlayFallback.dark;
+    const titlebar = document.querySelector('.titlebar');
+    if (!titlebar) {
+      window.api?.window?.setOverlay?.(fallback)?.catch?.(() => {});
+      return;
+    }
+    const computed = getComputedStyle(titlebar);
+    window.api?.window?.setOverlay?.({
+      color: rgbToHex(computed.backgroundColor) || fallback.color,
+      symbolColor: rgbToHex(computed.color) || fallback.symbolColor,
+      height: Math.round(titlebar.getBoundingClientRect().height) || 48
+    })?.catch?.(() => {});
+  };
+  // getComputedStyle already reflects the theme change for the titlebar (it has
+  // no colour transition); the rAF pass re-syncs once layout settles.
+  syncCaptionOverlay();
+  requestAnimationFrame(() => { syncCaptionOverlay(); requestAnimationFrame(syncCaptionOverlay); });
   const scale = Math.max(80, Math.min(130, Number(appearance.fontScale || 100))) / 100;
   document.documentElement.style.setProperty('--font-scale', String(scale));
   document.documentElement.style.zoom = String(scale);
@@ -398,8 +444,10 @@ function initializeDashboardMarkup() {
   $('#dashboardForecastPeriod').onchange = loadDashboardForecast;
   $('#dashboardForecastHorizon').onchange = loadDashboardForecast;
   $('#dashboardReportOpen').onclick = () => setManagedPage('reports');
-  loadDashboardSalesPanel();
-  loadDashboardForecast();
+  if (sessionReady) {
+    loadDashboardSalesPanel();
+    loadDashboardForecast();
+  }
 }
 
 async function loadDashboardForecast() {
@@ -590,8 +638,12 @@ function renderDashboard(summary) {
   const dashboardTopProducts = [...(summary.topProducts || [])].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
   $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
   document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
-  loadDashboardSalesPanel();
-  loadDashboardForecast();
+  // These chart panels hit guarded channels; before login they are re-run by
+  // refreshAfterLogin, so skip the boot copy instead of logging a rejection.
+  if (sessionReady) {
+    loadDashboardSalesPanel();
+    loadDashboardForecast();
+  }
 }
 
 function renderResults() {
@@ -669,8 +721,19 @@ $('#saveSale').addEventListener('click', () => saveSale());
 $('#saveAndPrint').addEventListener('click', () => saveSale(true));
 $('#cancelSale').addEventListener('click', clearSale);
 $('#addLine').addEventListener('click', () => $('#productSearch').focus());
+// The login and Quick PIN overlays cover the whole window, but they do not stop
+// keyboard events. Navigation shortcuts would route behind them and fire guarded
+// loads that are rejected before a session exists, so they must stay inert.
+function authOverlayVisible() {
+  return ['#loginBackdrop', '#quickPinBackdrop'].some((id) => {
+    const overlay = $(id);
+    return Boolean(overlay && !overlay.classList.contains('hidden'));
+  });
+}
+
 document.addEventListener('keydown', (event) => {
   if (!uiShortcuts) return;
+  if (authOverlayVisible()) return;
   if (event.key === 'F2') { event.preventDefault(); setManagedPage('sales'); $('#saleProductFilter')?.focus(); }
   if (event.key === 'F9') {
     event.preventDefault();
@@ -692,6 +755,8 @@ $('#saleDate').value = new Date().toISOString().slice(0, 10);
 $('#clock').textContent = new Intl.DateTimeFormat('fa-IR', { dateStyle: 'medium' }).format(new Date());
 initializeDashboardMarkup();
 renderDashboardSkeleton();
-window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
+// The summary call is guarded; before login it only produces a rejected
+// handler. refreshAfterLogin() issues the real first load after login.
+if (sessionReady) window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
 setPage('dashboard');
 

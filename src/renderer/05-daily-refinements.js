@@ -185,11 +185,13 @@ function initializeSaleCartModal() {
   $('#saleCartModal').addEventListener('click', (event) => { if (event.target.id === 'saleCartModal') event.currentTarget.classList.add('hidden'); });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') $('#saleCartModal')?.classList.add('hidden');
-    if (event.key === 'F8' && !event.target.matches('input,textarea,select')) { event.preventDefault(); $('#saleCartButton')?.click(); }
+    if (event.key === 'F8' && !authOverlayVisible() && !event.target.matches('input,textarea,select')) { event.preventDefault(); $('#saleCartButton')?.click(); }
   });
   renderSaleCart();
 }
-initializeSaleCartModal();
+// initializeSaleCartModal() is invoked by initializeManagementMarkup() once the
+// daily-sales markup exists; calling it here at chunk-parse time is too early
+// (#salesPage still holds the original static markup, so .modern-cart is null).
 renderSaleCart();
 
 // Confirmation is intentionally limited to actions that discard current work

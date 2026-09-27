@@ -655,10 +655,11 @@ function registerIpcHandlers() {
   secureHandle('window:set-overlay', (_event, payload = {}) => {
     if (process.platform !== 'win32' || typeof mainWindow?.setTitleBarOverlay !== 'function') return false;
     try {
+      const height = Math.max(32, Math.min(64, Math.round(Number(payload.height) || 48)));
       mainWindow.setTitleBarOverlay({
-        color: String(payload.color || '#111b2b'),
-        symbolColor: String(payload.symbolColor || '#dbe7f5'),
-        height: 42
+        color: String(payload.color || '#111a2b'),
+        symbolColor: String(payload.symbolColor || '#dbe4f0'),
+        height
       });
       return true;
     } catch {
@@ -736,12 +737,15 @@ const createWindow = () => {
     minHeight: 640,
     show: false,
     titleBarStyle: 'hidden',
+    // These are the first-paint values for the dark theme; once the renderer
+    // boots it re-syncs them to the computed titlebar colours via
+    // window:set-overlay. Height must match .titlebar in styles.css.
     titleBarOverlay: {
-      color: '#111b2b',
-      symbolColor: '#dbe7f5',
-      height: 42
+      color: '#111a2b',
+      symbolColor: '#dbe4f0',
+      height: 48
     },
-    backgroundColor: '#111827',
+    backgroundColor: '#0b1120',
     icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

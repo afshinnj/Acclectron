@@ -178,6 +178,11 @@ function initializeManagementMarkup() {
   // the invoice list pages). Calling our own partial version here would leave
   // #salesPage flagged as redesigned and make the full initializer bail out.
   (typeof initializeSalesMarkupFinal === 'function' ? initializeSalesMarkupFinal : initializeSalesMarkupLegacy)();
+  // The sales markup (and its .modern-cart node) is only created above, so the
+  // cart-modal wiring must run afterwards: it relocates that node into a modal
+  // opened from a topbar icon. Running it at chunk-parse time bails out because
+  // the node does not exist yet.
+  if (typeof initializeSaleCartModal === 'function') initializeSaleCartModal();
 }
 
 function groupSidebarMenu(className, label, icon, pages) {
@@ -270,6 +275,8 @@ function setManagedPage(page) {
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.page === page));
   $('#pageTitle').textContent = titles[page] || page; $('#windowContext').textContent = titles[page] || page;
   if (page === 'products') loadManagedProducts(); if (page === 'categories') loadManagedCategories(); if (page === 'customers') loadManagedParties();
+  // Page-entry data loads live in setPageRouter (04-invoices-assistant-reports.js),
+  // which supersedes this router for the real UI.
 }
 
 function openManagementModal(kind, record = null, options = {}) {
@@ -949,13 +956,18 @@ document.addEventListener('click', (event) => {
   renderManagedProducts();
   if (semanticSearchEnabled) requestSemanticSearch();
 });
-window.api?.ai?.status?.().then((status) => {
-  semanticSearchAvailable = Boolean(status?.available);
-  updateSemanticToggle();
-}).catch(() => {
-  semanticSearchAvailable = false;
-  updateSemanticToggle();
-});
+// Probed from refreshAfterLogin: the boot copy is rejected by the IPC guard
+// before a session exists, so the semantic toggle must be re-checked after login.
+function refreshSemanticStatus() {
+  window.api?.ai?.status?.().then((status) => {
+    semanticSearchAvailable = Boolean(status?.available);
+    updateSemanticToggle();
+  }).catch(() => {
+    semanticSearchAvailable = false;
+    updateSemanticToggle();
+  });
+}
+if (sessionReady) refreshSemanticStatus();
 
 function renderEnhancedManagedProducts() {
   enhanceProductManagementUi();
@@ -1262,7 +1274,11 @@ function initializeSettingsPage() {
       showToast('تنظیمات چاپ ذخیره شد.');
     } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
   });
-  loadSettings().catch(() => {});
+  // This original settings screen is superseded at parse time by
+  // initializeSettingsPageV2 (03-settings-print.js), which rebuilds #settingsPage
+  // and owns the post-login reload via refreshSettingsData. Its guarded reads
+  // (units, printers) are rejected before login, so skip the boot copy.
+  if (sessionReady) loadSettings().catch(() => {});
 }
 
 const originalManagedPageForSettings = setManagedPage;

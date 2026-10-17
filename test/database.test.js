@@ -13,6 +13,7 @@ const {
   setPartyActive,
   searchProducts,
   getDatabase,
+  getInvoiceDetails,
   getSalesReport,
   getDashboardSummary,
   createSale,
@@ -339,6 +340,35 @@ test('purchase preserves historical price and updates current product price tran
   }
 });
 
+test('purchase creation rejects invalid prices and discounts above line or invoice totals', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id, stock, purchase_price FROM products LIMIT 1').get();
+    const before = { stock: Number(product.stock), purchasePrice: Number(product.purchase_price) };
+    const item = { productId: product.id, quantity: 2, unitPrice: 1000 };
+    assert.throws(
+      () => createPurchase({ items: [{ ...item, discount: 2001 }] }),
+      /تخفیف هر ردیف/
+    );
+    assert.throws(
+      () => createPurchase({ items: [item], discount: 2001 }),
+      /تخفیف فاکتور/
+    );
+    assert.throws(
+      () => createPurchase({ items: [{ ...item, unitPrice: 'نامعتبر' }] }),
+      /اقلام خرید نامعتبر/
+    );
+    assert.deepEqual(
+      db.prepare('SELECT stock, purchase_price FROM products WHERE id = ?').get(product.id),
+      { stock: before.stock, purchase_price: before.purchasePrice }
+    );
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM purchases WHERE status = 'completed'").get().count, 0);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('reads purchase-price history from completed invoice items and excludes cancelled purchases', () => {
   const { directory, db } = openTestDatabase();
   try {
@@ -467,6 +497,67 @@ test('editing a sale refreshes its stock movement audit trail', () => {
       "SELECT quantity FROM stock_movements WHERE type = 'sale' AND reference_type = 'sale' AND reference_id = ?"
     ).all(sale.id).map((row) => ({ ...row }));
     assert.deepEqual(movements, [{ quantity: -2 }]);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('editing a sale cannot invalidate completed return history', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 10, purchase_price = 0 WHERE id = ?').run(product.id);
+    const sale = createSale({
+      invoiceNumber: 'S-EDIT-RETURN-GUARD', date: '2026-09-01',
+      items: [{ productId: product.id, quantity: 2, unitPrice: 1000 }]
+    });
+    const invoice = getInvoiceDetails('sale', sale.id);
+    createSaleReturn({
+      saleId: sale.id, date: '2026-09-02', refundAmount: 1000,
+      items: [{ saleItemId: invoice.items[0].id, quantity: 1 }]
+    });
+    const stockBeforeEdit = Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock);
+
+    assert.throws(() => updateSale(sale.id, {
+      date: '2026-09-01', items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }]
+    }), /سابقهٔ مرجوعی/);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), stockBeforeEdit);
+    assert.equal(Number(db.prepare('SELECT COUNT(*) AS count FROM sale_items WHERE sale_id = ?').get(sale.id).count), 1);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('editing a sale preserves payment check state and payment date', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    const product = db.prepare('SELECT id FROM products LIMIT 1').get();
+    db.prepare('UPDATE products SET stock = 10, purchase_price = 0 WHERE id = ?').run(product.id);
+    const paidAt = '2026-09-03T08:30:00.000Z';
+    const sale = createSale({
+      invoiceNumber: 'S-EDIT-PAYMENT-META', date: '2026-09-01',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }],
+      payments: [{ method: 'check', amount: 3, checkNumber: 'EDIT-CHK', bankName: 'Test Bank', dueDate: '2026-10-01', checkHolder: 'Test Holder', checkStatus: 'cleared', paidAt, notes: 'verified' }]
+    });
+    const saved = getInvoiceDetails('sale', sale.id);
+    updateSale(sale.id, {
+      date: '2026-09-01',
+      items: [{ productId: product.id, quantity: 1, unitPrice: 1000 }],
+      payments: saved.payments.map((payment) => ({
+        method: payment.method, amount: Number(payment.amount) / 100,
+        checkNumber: payment.check_number, bankName: payment.bank_name, dueDate: payment.due_date,
+        checkHolder: payment.check_holder, checkStatus: payment.check_status,
+        paidAt: payment.paid_at, notes: payment.notes
+      }))
+    });
+
+    const [payment] = db.prepare('SELECT * FROM invoice_payments WHERE sale_id = ?').all(sale.id);
+    assert.equal(payment.check_status, 'cleared');
+    assert.equal(payment.paid_at, paidAt);
+    assert.equal(payment.check_holder, 'Test Holder');
+    assert.equal(payment.notes, 'verified');
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

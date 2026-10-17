@@ -198,7 +198,9 @@ async function editInvoice(kind, id) {
   state.items.unshift(newInvoiceItem('sale'));
   state.payments = invoice.payments.map((payment) => ({
     method: payment.method, amount: Number(payment.amount || 0), checkNumber: payment.check_number || '',
-    bankName: payment.bank_name || '', dueDate: payment.due_date || ''
+    bankName: payment.bank_name || '', dueDate: payment.due_date || '',
+    paidAt: payment.paid_at || '', checkHolder: payment.check_holder || '',
+    checkStatus: payment.check_status || '', notes: payment.notes || ''
   }));
   $('#saleParty').value = invoice.partyName || '';
   $('#saleDate').value = isoToJalali(invoice.date);
@@ -947,11 +949,15 @@ function initializeAssistantPage() {
     <section id="assistantPage" class="page hidden">
       <div class="page-heading"><div><span class="eyebrow">پردازش درخواست متنی · کاملاً محلی و آفلاین</span><h2>دستیار هوشمند</h2></div></div>
       <div class="panel assistant-box">
-        <label class="assistant-label">درخواست خود را به فارسی بنویسید
-          <textarea id="assistantInput" rows="2" placeholder="مثال: لیست پروانه های لباسشویی را لیست کن و 20 درصد به مبلغ خرید اضافه کن"></textarea>
+        <div id="assistantConversation" class="assistant-conversation" aria-live="polite"></div>
+        <label class="assistant-label">سؤال یا درخواست خود را به فارسی بنویسید
+          <textarea id="assistantInput" rows="2" placeholder="مثال: تعداد محصولات چنده؟ / فروش امروز چقدر بود؟ / لیست پروانه های لباسشویی را لیست کن و 20 درصد به مبلغ خرید اضافه کن"></textarea>
         </label>
         <div class="assistant-chips">
-          <button type="button" class="assistant-chip" data-text="پمپ تخلیه لباسشویی را لیست کن">فهرست: پمپ تخلیه لباسشویی</button>
+          <button type="button" class="assistant-chip" data-text="تعداد محصولات چنده؟">تعداد محصولات</button>
+          <button type="button" class="assistant-chip" data-text="فروش امروز چقدر بود؟">فروش امروز</button>
+          <button type="button" class="assistant-chip" data-text="کالاهای کم موجودی کدوم‌ن؟">کمبود موجودی</button>
+          <button type="button" class="assistant-chip" data-text="چه کارایی می‌تونی بکنی؟">چه کارایی بلدی؟</button>
           <button type="button" class="assistant-chip" data-text="پمپ تخلیه لباسشویی را لیست کن و 10 درصد به قیمت خرید اضافه کن">+۱۰٪ قیمت خرید</button>
           <button type="button" class="assistant-chip" data-text="سیم مفتالی را لیست کن و 15 درصد از قیمت فروش کم کن و نام محصول تعداد موجودی و قیمت را نشان بده">−۱۵٪ فروش با ستون‌های دلخواه</button>
         </div>
@@ -968,7 +974,14 @@ function initializeAssistantPage() {
         <div class="table-wrap"><table><thead id="assistantHead"></thead><tbody id="assistantRows"></tbody></table></div>
       </div>
     </section>`);
-  const state = { plan: null };
+  const state = { plan: null, lastAnswerKind: null };
+  const appendBubble = (role, text) => {
+    const box = $('#assistantConversation');
+    if (!box) return;
+    box.classList.remove('hidden');
+    box.insertAdjacentHTML('beforeend', `<div class="assistant-bubble ${role}">${esc(text)}</div>`);
+    box.scrollTop = box.scrollHeight;
+  };
   const toUser = (cents) => Math.round((Number(cents) || 0) / 100 * currencyFactor());
   const toCents = (raw) => Math.max(0, Math.round(parsePriceInput(raw) * 100 / currencyFactor()));
   const fieldInput = (id, field) => document.querySelector(`.assistant-new-price[data-id="${id}"][data-field="${field}"]`);
@@ -978,15 +991,18 @@ function initializeAssistantPage() {
   const render = () => {
     const plan = state.plan;
     const adjust = plan?.action?.type === 'adjust';
+    const isAnswer = plan?.action?.type === 'answer';
     const columns = plan?.columns?.length ? plan.columns : ['code', 'name', 'stock', 'purchasePrice', 'wholesalePrice', 'retailPrice'];
     const targetField = adjust ? { purchase: 'purchasePrice', wholesale: 'wholesalePrice', retail: 'retailPrice' }[plan.action.field] : null;
     $('#assistantApply').disabled = !adjust;
     $('#assistantExport').disabled = !plan?.products?.length;
     $('#assistantExportPdf').disabled = !plan?.products?.length;
     const fieldLabels = { purchase: 'قیمت خرید', wholesale: 'قیمت عمده', retail: 'قیمت فروش' };
-    $('#assistantSummary').textContent = plan
-      ? `${new Intl.NumberFormat('fa-IR').format(plan.products.length)} کالا مطابقت دارد · روش: ${matchModeLabels[plan.matchMode] || 'تطبیق کلمه‌ای'}${adjust ? ` · عملیات: ${plan.action.direction > 0 ? 'افزایش' : 'کاهش'} ${new Intl.NumberFormat('fa-IR').format(plan.action.percent)}٪ ${fieldLabels[plan.action.field]} — مقادیر ستون «جدید» را می‌توانید قبل از اعمال ویرایش کنید.` : ' · فقط فهرست‌سازی (بدون تغییر قیمت)'}`
-      : '';
+    $('#assistantSummary').textContent = isAnswer
+      ? ''
+      : plan
+        ? `${new Intl.NumberFormat('fa-IR').format(plan.products.length)} کالا مطابقت دارد · روش: ${matchModeLabels[plan.matchMode] || 'تطبیق کلمه‌ای'}${adjust ? ` · عملیات: ${plan.action.direction > 0 ? 'افزایش' : 'کاهش'} ${new Intl.NumberFormat('fa-IR').format(plan.action.percent)}٪ ${fieldLabels[plan.action.field]} — مقادیر ستون «جدید» را می‌توانید قبل از اعمال ویرایش کنید.` : ' · فقط فهرست‌سازی (بدون تغییر قیمت)'}`
+        : '';
     $('#assistantHead').innerHTML = `<tr><th></th>${columns.map((column) => `<th>${columnLabels[column] || column}${column === targetField ? ' (فعلی ← جدید)' : ''}</th>`).join('')}</tr>`;
     const cell = (p, column) => {
       if (column === 'margin') {
@@ -1004,14 +1020,22 @@ function initializeAssistantPage() {
       return column === 'name' ? `${esc(value)}<small>${esc(p.unitSymbol || '')}</small>` : esc(value ?? '—');
     };
     $('#assistantRows').innerHTML = plan?.products?.length ? plan.products.map((p) => `<tr><td><input class="assistant-select" type="checkbox" data-id="${p.id}" checked aria-label="انتخاب ${esc(p.name)}"><button type="button" class="assistant-remove" data-id="${p.id}" title="حذف از نتیجه">✕</button></td>${columns.map((column) => `<td>${cell(p, column)}</td>`).join('')}</tr>`).join('')
+      : isAnswer ? ''
       : `<tr class="empty-row"><td colspan="${columns.length + 1}">ابتدا یک درخواست تحلیل کنید یا کالایی مطابق درخواست پیدا نشد.</td></tr>`;
   };
   const run = async () => {
     const errorBox = $('#assistantError');
     errorBox.classList.add('hidden');
+    const question = ($('#assistantInput').value || '').trim();
+    if (!question) { showToast('سؤال یا درخواست خود را در کادر بنویسید.', true); return; }
+    appendBubble('user', question);
     try {
-      state.plan = await window.api.ai.plan($('#assistantInput').value || '', (state.plan?.products || []).map((product) => product.id));
+      // Follow-ups ("و دیروز؟") re-ask the previous question, so the last
+      // answered kind travels with the request; a non-answer resets it.
+      state.plan = await window.api.ai.plan(question, (state.plan?.products || []).map((product) => product.id), { lastKind: state.lastAnswerKind });
+      state.lastAnswerKind = state.plan?.answer?.kind || null;
       render();
+      if (state.plan?.answer?.text) appendBubble('assistant', state.plan.answer.text);
     } catch (error) {
       state.plan = null;
       render();
@@ -1020,6 +1044,9 @@ function initializeAssistantPage() {
     }
   };
   $('#assistantRun').addEventListener('click', run);
+  $('#assistantInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); run(); }
+  });
   document.querySelectorAll('.assistant-chip').forEach((chip) => chip.addEventListener('click', () => {
     $('#assistantInput').value = chip.dataset.text || '';
     run();
@@ -1244,7 +1271,7 @@ function reportSvgLine(container, points, series) {
   const grid = [0.25, 0.5, 0.75].map((ratio) => `<line x1="${pad}" y1="${y(min + range * ratio)}" x2="${width - pad}" y2="${y(min + range * ratio)}" class="chart-grid"/>`).join('')
     + (min < 0 ? `<line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" class="chart-zero"/>` : '');
   const paths = series.map((s) => `<polyline points="${points.map((p, i) => `${x(i)},${y(p[s.key])}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
-  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${esc(reportPeriodLabel(p.date))}</text>` : '')).join('');
+  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${esc(p.chartLabel || reportPeriodLabel(p.date))}</text>` : '')).join('');
   const legend = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
   container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img">${grid}${paths}${labels}</svg><div class="chart-legend">${legend}</div>`;
 }
@@ -1315,10 +1342,15 @@ async function loadSalesReport() {
     if (forecastChart) {
       try {
         const forecastData = await window.api.reports.forecast({ period: 'month', horizon: 3 });
-        const historyRows = (forecastData.history || []).map((row) => ({ date: row.period, netSales: row.netSales }));
-        const predictionRows = (forecastData.predictions || []).map((row) => ({ date: row.period, netSales: row.netSales }));
-        reportSvgLine(forecastChart, [...historyRows, ...predictionRows], [{ key: 'netSales', label: 'فروش واقعی / پیش‌بینی‌شده', color: '#fbbf24' }]);
-        $('#reportForecastNote').textContent = `${forecastData.note} · اطمینان: ${forecastData.confidence}`;
+        if (!forecastData.history?.length) {
+          forecastChart.innerHTML = '<div class="empty-state compact">برای پیش‌بینی هنوز سابقهٔ فروش وجود ندارد.</div>';
+          $('#reportForecastNote').textContent = forecastData.note || 'دادهٔ کافی برای پیش‌بینی وجود ندارد.';
+        } else {
+          const historyRows = (forecastData.history || []).map((row) => ({ date: row.period, chartLabel: dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
+          const predictionRows = (forecastData.predictions || []).map((row) => ({ date: row.period, chartLabel: dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
+          reportSvgLine(forecastChart, [...historyRows, ...predictionRows], [{ key: 'netSales', label: 'فروش واقعی / پیش‌بینی‌شده', color: '#fbbf24' }]);
+          $('#reportForecastNote').textContent = `${forecastData.note} · اطمینان: ${forecastData.confidence}`;
+        }
       } catch {
         forecastChart.innerHTML = '<div class="empty-state compact">داده کافی برای پیش‌بینی وجود ندارد.</div>';
         $('#reportForecastNote').textContent = 'داده کافی برای پیش‌بینی وجود ندارد';

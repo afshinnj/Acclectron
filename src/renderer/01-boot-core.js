@@ -423,6 +423,9 @@ function renderMetrics(summary) {
   $('#lowStock').textContent = `${new Intl.NumberFormat('fa-IR').format(summary.lowStock)} کالا`;
 }
 
+let dashboardSalesRequest = 0;
+let dashboardForecastRequest = 0;
+
 function initializeDashboardMarkup() {
   const page = $('#dashboardPage');
   if (!page || page.dataset.redesigned === '1') return;
@@ -434,10 +437,10 @@ function initializeDashboardMarkup() {
     </div>
     <div class="dashboard-value-strip"><div><span>ارزش خرید موجودی</span><strong id="dashboardInventoryPurchase">۰ تومان</strong></div><div><span>ارزش فروش موجودی</span><strong id="dashboardInventoryRetail">۰ تومان</strong></div><div><span>جریان نقدی ماه</span><strong id="dashboardCashFlow">۰ تومان</strong></div></div>
     <div class="dashboard-alert-strip"><div><strong>هشدارهای فوری</strong><small id="dashboardAlertHint">در حال بررسی...</small></div><button id="dashboardAlertsButton" class="secondary">مشاهده اعلان‌ها</button></div>
-    <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>روند فروش و سود</h3><small id="dashboardSalesTrendRange">هفته جاری</small></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
+    <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش و سود ماه جاری</h3><small id="dashboardSalesTrendRange">روند روزانه</small></div><div class="dashboard-chart-month-totals"><div><span>کل فروش</span><strong id="dashboardChartMonthSales">۰ تومان</strong></div><div><span>سود ماه</span><strong id="dashboardChartMonthProfit">۰ تومان</strong></div></div><div id="dashboardSalesChart" class="dashboard-chart"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>دریافت بر اساس روش پرداخت</h3><small>ماه جاری</small></div><div id="dashboardPaymentsChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-main"><section class="panel dashboard-panel"><div class="panel-heading"><h3>فروش بر اساس دسته‌بندی</h3><small>ماه جاری</small></div><div id="dashboardCategoryChart" class="dashboard-bars"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>وضعیت نقدینگی ماه</h3><small>دریافت و هزینه</small></div><div id="dashboardCashChart" class="dashboard-bars"></div></section></div>
     <div class="dashboard-grid dashboard-grid-lists"><section class="panel dashboard-panel"><div class="panel-heading"><h3>آخرین فروش‌ها</h3><button class="text-button dashboard-link" data-page="sales-invoices">همه فروش‌ها</button></div><div id="dashboardRecentSales" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>بدهکارترین اشخاص</h3><button class="text-button dashboard-link" data-page="ledger">گردش حساب</button></div><div id="dashboardDebtors" class="dashboard-list"></div></section><section class="panel dashboard-panel"><div class="panel-heading"><h3>پرفروش‌ترین کالاها</h3><button class="text-button dashboard-link" data-page="reports">گزارش کامل</button></div><div id="dashboardProducts" class="dashboard-list"></div></section></div>
-    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود</span><strong id="dashboardReportProfit">۰</strong></div><div><span>تعداد فاکتور</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دوره</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div><div class="dashboard-forecast-box"><div class="panel-heading"><div><h3>پیش‌بینی فروش آینده</h3><small id="dashboardForecastNote">بر اساس روند ماه‌های اخیر</small></div><div class="dashboard-report-controls"><select id="dashboardForecastPeriod"><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><select id="dashboardForecastHorizon"><option value="3">۳ دوره</option><option value="6">۶ دوره</option><option value="12">۱۲ دوره</option></select></div></div><div id="dashboardForecastChart" class="dashboard-report-chart"></div></div></section>`;
+    <section class="panel dashboard-report-panel"><div class="panel-heading"><div><h3>داشبورد تحلیلی فروش</h3><small id="dashboardReportHint">نمای کلی فروش و سود</small></div><div class="dashboard-report-controls"><select id="dashboardReportPeriod" aria-label="بازهٔ تحلیل فروش"><option value="day">روزانه</option><option value="week">هفتگی</option><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><button id="dashboardReportOpen" class="text-button">گزارش کامل</button></div></div><div class="dashboard-report-kpis"><div><span>فروش خالص این بازه</span><strong id="dashboardReportSales">۰</strong></div><div><span>سود این بازه</span><strong id="dashboardReportProfit">۰</strong></div><div><span>فاکتورهای این بازه</span><strong id="dashboardReportInvoices">۰</strong></div><div><span>رشد آخرین دورهٔ کامل</span><strong id="dashboardReportGrowth">—</strong></div></div><div id="dashboardReportChart" class="dashboard-report-chart"></div><div class="dashboard-forecast-box"><div class="panel-heading"><div><h3>پیش‌بینی فروش آینده</h3><small id="dashboardForecastNote">بر اساس روند دوره‌های اخیر</small></div><div class="dashboard-report-controls"><select id="dashboardForecastPeriod" aria-label="واحد پیش‌بینی"><option value="month" selected>ماهانه</option><option value="year">سالانه</option></select><select id="dashboardForecastHorizon" aria-label="تعداد دوره‌های پیش‌بینی"><option value="3">۳ دوره</option><option value="6">۶ دوره</option><option value="12">۱۲ دوره</option></select></div></div><div id="dashboardForecastChart" class="dashboard-report-chart"></div></div></section>`;
   $('#refreshDashboard').onclick = () => { renderDashboardSkeleton(); window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch((e) => showToast(e.message, true)); };
   $('#dashboardAlertsButton').onclick = () => $('#notificationButton')?.click();
   $('#dashboardReportPeriod').onchange = loadDashboardSalesPanel;
@@ -453,49 +456,147 @@ function initializeDashboardMarkup() {
 async function loadDashboardForecast() {
   const chart = $('#dashboardForecastChart');
   if (!chart) return;
+  const request = ++dashboardForecastRequest;
   try {
     const period = $('#dashboardForecastPeriod')?.value || 'month';
     const horizon = Number($('#dashboardForecastHorizon')?.value || 3);
     const data = await window.api.reports.forecast({ period, horizon });
-    const history = (data.history || []).map((row) => ({ ...row, date: row.period, forecast: 0 }));
-    const predictions = (data.predictions || []).map((row) => ({ ...row, date: row.period, forecast: row.netSales }));
+    if (request !== dashboardForecastRequest) return;
+    if (!data.history?.length) {
+      chart.innerHTML = '<div class="empty-state compact">برای پیش‌بینی هنوز سابقهٔ فروش وجود ندارد.</div>';
+      $('#dashboardForecastNote').textContent = data.note || 'دادهٔ کافی برای پیش‌بینی وجود ندارد.';
+      return;
+    }
+    const forecastLabel = (value) => {
+      if (period === 'year') return String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+      const [year, month] = String(value).split('-');
+      return `${year}/${month}`.replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+    };
+    const history = (data.history || []).map((row) => ({ ...row, date: row.period, chartLabel: forecastLabel(row.period), forecast: 0 }));
+    const predictions = (data.predictions || []).map((row) => ({ ...row, date: row.period, chartLabel: forecastLabel(row.period), forecast: row.netSales }));
     reportSvgLine(chart, [...history, ...predictions], [{ key: 'netSales', label: 'فروش واقعی/پیش‌بینی', color: '#fbbf24' }, { key: 'forecast', label: 'پیش‌بینی', color: '#c084fc' }]);
     $('#dashboardForecastNote').textContent = `${data.note} · اطمینان: ${data.confidence}`;
   } catch {
+    if (request !== dashboardForecastRequest) return;
     chart.innerHTML = '<div class="empty-state compact">پیش‌بینی برای این بازه در دسترس نیست.</div>';
+    $('#dashboardForecastNote').textContent = 'اطلاعات پیش‌بینی بارگذاری نشد.';
   }
+}
+
+function dashboardTodayIso() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function dashboardShiftIso(iso, days) {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dashboardPeriodWindow(period) {
+  const today = dashboardTodayIso();
+  if (period === 'day') {
+    const from = dashboardShiftIso(today, -29);
+    const periods = Array.from({ length: 30 }, (_, index) => dashboardShiftIso(from, index));
+    return { from, to: today, periods, count: periods.length, label: '۳۰ روز اخیر' };
+  }
+  if (period === 'week') {
+    const currentWeek = new Date(`${today}T00:00:00Z`);
+    currentWeek.setUTCDate(currentWeek.getUTCDate() - ((currentWeek.getUTCDay() + 1) % 7));
+    const currentStart = currentWeek.toISOString().slice(0, 10);
+    const firstStart = dashboardShiftIso(currentStart, -11 * 7);
+    const periods = Array.from({ length: 12 }, (_, index) => dashboardShiftIso(firstStart, index * 7));
+    return { from: firstStart, to: today, periods, count: periods.length, label: '۱۲ هفتهٔ اخیر' };
+  }
+  const [currentYear, currentMonth] = gregorianToJalali(...today.split('-').map(Number));
+  if (period === 'year') {
+    const firstYear = currentYear - 4;
+    const periods = Array.from({ length: 5 }, (_, index) => String(firstYear + index));
+    return { from: jalaliToGregorian(firstYear, 1, 1), to: today, periods, count: periods.length, label: '۵ سال شمسی اخیر' };
+  }
+  const firstMonthIndex = currentYear * 12 + currentMonth - 12;
+  const firstYear = Math.floor(firstMonthIndex / 12);
+  const firstMonth = (firstMonthIndex % 12) + 1;
+  const periods = Array.from({ length: 12 }, (_, index) => {
+    const monthIndex = firstMonthIndex + index;
+    return `${Math.floor(monthIndex / 12)}-${String((monthIndex % 12) + 1).padStart(2, '0')}`;
+  });
+  return {
+    from: jalaliToGregorian(firstYear, firstMonth, 1), to: today, periods,
+    count: periods.length, label: '۱۲ ماه شمسی اخیر'
+  };
+}
+
+function dashboardPeriodKey(iso, period) {
+  if (period === 'day') return iso;
+  if (period === 'week') {
+    const date = new Date(`${iso}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 1) % 7));
+    return date.toISOString().slice(0, 10);
+  }
+  const [year, month] = gregorianToJalali(...iso.split('-').map(Number));
+  return period === 'year' ? String(year) : `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function dashboardPeriodChartLabel(key, period) {
+  if (period === 'month') return key.replace('-', '/').replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+  if (period === 'year') return key.replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+  return reportPeriodLabel(key);
 }
 
 async function loadDashboardSalesPanel() {
   const chart = $('#dashboardReportChart');
   if (!chart) return;
+  const request = ++dashboardSalesRequest;
   try {
     const period = $('#dashboardReportPeriod')?.value || 'month';
-    const data = await window.api.reports.sales({ period });
-    const rows = data.byPeriod || [];
+    const analyticsWindow = dashboardPeriodWindow(period);
+    const data = await window.api.reports.sales({ from: analyticsWindow.from, to: analyticsWindow.to, period: 'day' });
+    if (request !== dashboardSalesRequest) return;
+    const bucketMap = new Map(analyticsWindow.periods.map((key) => [key, {
+      period: key, date: key, chartLabel: dashboardPeriodChartLabel(key, period),
+      netSales: 0, profitTotal: 0, invoiceCount: 0
+    }]));
+    for (const row of data.byDate || []) {
+      const bucket = bucketMap.get(dashboardPeriodKey(row.date, period));
+      if (!bucket) continue;
+      bucket.netSales += Number(row.netSales || 0);
+      bucket.profitTotal += Number(row.profitTotal || 0);
+      bucket.invoiceCount += Number(row.invoiceCount || 0);
+    }
+    const rows = [...bucketMap.values()];
     const totalSales = rows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
     const totalProfit = rows.reduce((sum, row) => sum + Number(row.profitTotal || 0), 0);
-    const latest = rows.length ? Number(rows[rows.length - 1].netSales || 0) : 0;
-    const previous = rows.length > 1 ? Number(rows[rows.length - 2].netSales || 0) : 0;
-    const growth = previous ? ((latest - previous) / previous) * 100 : null;
+    const latestCompleteIndex = rows.length - 2;
+    const latest = latestCompleteIndex >= 0 ? Number(rows[latestCompleteIndex].netSales || 0) : 0;
+    const previous = latestCompleteIndex > 0 ? Number(rows[latestCompleteIndex - 1].netSales || 0) : 0;
+    const growth = previous > 0 ? ((latest - previous) / previous) * 100 : null;
     const labels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
-    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${rows.length} دوره`;
+    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${analyticsWindow.label} · ${isoToJalali(analyticsWindow.from)} تا ${isoToJalali(analyticsWindow.to)}`;
     $('#dashboardReportSales').textContent = money(totalSales);
     $('#dashboardReportProfit').textContent = money(totalProfit);
     $('#dashboardReportProfit').classList.toggle('negative', totalProfit < 0);
-    $('#dashboardReportInvoices').textContent = new Intl.NumberFormat('fa-IR').format(Number(data.summary?.invoiceCount || 0));
-    $('#dashboardReportGrowth').textContent = growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`;
+    $('#dashboardReportInvoices').textContent = new Intl.NumberFormat('fa-IR').format(rows.reduce((sum, row) => sum + Number(row.invoiceCount || 0), 0));
+    $('#dashboardReportGrowth').textContent = growth === null
+      ? (latest > 0 ? 'شروع فروش' : '—')
+      : `${growth >= 0 ? '+' : ''}${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(growth)}٪`;
     $('#dashboardReportGrowth').classList.toggle('negative', growth !== null && growth < 0);
-    const chartRows = rows.map((row) => ({ ...row, date: row.period }));
-    reportSvgLine(chart, chartRows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
-  } catch (error) {
+    $('#dashboardReportGrowth').title = latestCompleteIndex >= 1
+      ? `مقایسهٔ ${dashboardPeriodChartLabel(rows[latestCompleteIndex].period, period)} با ${dashboardPeriodChartLabel(rows[latestCompleteIndex - 1].period, period)}`
+      : 'برای مقایسهٔ دوره‌ای دادهٔ کافی نیست.';
+    reportSvgLine(chart, rows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
+  } catch {
+    if (request !== dashboardSalesRequest) return;
     chart.innerHTML = '<div class="empty-state compact">داده‌ای برای داشبورد تحلیلی وجود ندارد.</div>';
+    ['#dashboardReportSales', '#dashboardReportProfit', '#dashboardReportInvoices', '#dashboardReportGrowth'].forEach((id) => { const node = $(id); if (node) node.textContent = '—'; });
+    $('#dashboardReportHint').textContent = 'بارگذاری اطلاعات تحلیل فروش ناموفق بود.';
   }
 }
 
 function renderDashboardSkeleton() {
   initializeDashboardMarkup();
-  ['#dashboardSalesChart', '#dashboardPaymentsChart', '#dashboardCategoryChart', '#dashboardCashChart'].forEach((id) => { const node = $(id); if (node) node.innerHTML = '<div class="skeleton chart-skeleton"></div>'; });
+  ['#dashboardSalesChart', '#dashboardPaymentsChart', '#dashboardCategoryChart', '#dashboardCashChart', '#dashboardReportChart', '#dashboardForecastChart'].forEach((id) => { const node = $(id); if (node) node.innerHTML = '<div class="skeleton chart-skeleton"></div>'; });
   ['#dashboardRecentSales', '#dashboardDebtors', '#dashboardProducts'].forEach((id) => { const node = $(id); if (node) node.innerHTML = '<div class="skeleton row-skeleton"></div>'.repeat(4); });
   ['#kpiSalesSpark', '#kpiProfitSpark'].forEach((id) => { const node = $(id); if (node) node.innerHTML = ''; });
 }
@@ -559,7 +660,11 @@ function renderDashboard(summary) {
     weekDates.push(cursor.toISOString().slice(0, 10));
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
-  $('#dashboardSalesTrendRange').textContent = 'هفته جاری؛ شنبه تا امروز';
+  $('#dashboardSalesTrendRange').textContent = 'روند روزانهٔ هفته جاری';
+  const chartMonthSales = $('#dashboardChartMonthSales');
+  if (chartMonthSales) chartMonthSales.textContent = money(summary.monthSales || 0);
+  const chartMonthProfit = $('#dashboardChartMonthProfit');
+  if (chartMonthProfit) chartMonthProfit.textContent = money(summary.monthProfit || 0);
   const chartRows = weekDates.map((date) => ({ date, sales: 0, profit: 0, ...(trendByDate.get(date) || {}) }));
   const compactMoney = (cents) => {
     const value = (Number(cents || 0) / 100) * currencyFactor();

@@ -1120,6 +1120,15 @@ tr.pinned-row td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .assistant-actions-row{display:flex;align-items:center;gap:10px;margin:12px 0;flex-wrap:wrap}
 .assistant-summary{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.8}
 .assistant-new-price{width:110px;margin:0!important;padding:6px!important;text-align:left}
+/* Chat transcript: user questions right-aligned, assistant answers left. */
+.assistant-conversation{display:none;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;margin:0 0 12px;padding:2px 4px;scrollbar-gutter:stable}
+.assistant-conversation:not(:empty){display:flex}
+.assistant-bubble{max-width:82%;padding:9px 13px;border-radius:12px;font-size:12.5px;line-height:1.9;white-space:pre-wrap;word-break:break-word;animation:toast-in .18s ease}
+.assistant-bubble.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-left-radius:4px}
+.assistant-bubble.assistant{align-self:flex-start;background:#172237;border:1px solid #30435f;color:#dbe6f3;border-bottom-right-radius:4px}
+:root[data-theme="light"] .assistant-bubble.assistant{background:#eef3f9;border-color:#c3d0de;color:#1e293b}
+:root[data-theme="hacker"] .assistant-bubble.assistant{background:#03130a;border-color:#14532d;color:#c9f5d6}
+:root[data-theme="hacker"] .assistant-bubble.user{background:#14532d;color:#eafff1}
 
 /* ── UX polish ─────────────────────────────────────────────────────────── */
 /* Sticky table headers: long lists keep their column titles while scrolling. */
@@ -1342,3 +1351,4 @@ tr:hover td{background:color-mix(in srgb,var(--win-accent) 7%,var(--win-surface)
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
 .quick-pin-settings{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
 .quick-pin-settings small{color:var(--muted);flex-basis:100%}
+.dashboard-chart-month-totals{display:flex;gap:10px;margin:0 0 8px}.dashboard-chart-month-totals>div{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:#101c2d}.dashboard-chart-month-totals span{display:block;color:#91a2ba;font-size:10px}.dashboard-chart-month-totals strong{display:block;margin-top:4px;color:#e5edf7;font-size:13px;white-space:nowrap}.dashboard-chart-month-totals>div:first-child strong{color:#7dd3fc}.dashboard-chart-month-totals>div:last-child strong{color:#86efac}

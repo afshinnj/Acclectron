@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('api', {
   ai: {
     status: () => ipcRenderer.invoke('ai:status'),
     semanticSearch: (payload) => ipcRenderer.invoke('ai:semantic-search', payload),
-    plan: (text, previousIds) => ipcRenderer.invoke('ai:assistant-plan', { text, previousIds }),
+    plan: (text, previousIds, context) => ipcRenderer.invoke('ai:assistant-plan', { text, previousIds, context }),
     apply: (updates) => ipcRenderer.invoke('ai:assistant-apply', { updates }),
     undo: () => ipcRenderer.invoke('ai:assistant-undo'),
     exportCsv: (rows, fileName) => ipcRenderer.invoke('ai:assistant-export', { rows, fileName }),

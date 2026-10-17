@@ -257,26 +257,38 @@ function createPurchase(payload = {}) {
     // Purchase quantities are whole inventory units in the invoice editor.
     // Normalize API payloads too so stock moves by whole units.
     const quantity = Number(item.quantity);
-    const unitPrice = Math.round(Number(item.unitPrice) || 0);
-    const itemDiscount = Math.round(Number(item.discount) || 0);
-    if (!Number.isFinite(quantity) || quantity <= 0 || unitPrice < 0 || itemDiscount < 0) {
+    const rawUnitPrice = Number(item.unitPrice);
+    const rawDiscount = Number(item.discount ?? 0);
+    if (!Number.isFinite(quantity) || quantity <= 0
+      || !Number.isFinite(rawUnitPrice) || rawUnitPrice < 0
+      || !Number.isFinite(rawDiscount) || rawDiscount < 0) {
       throw new Error('اقلام خرید نامعتبر است.');
     }
+    const unitPrice = Math.round(rawUnitPrice);
+    const itemDiscount = Math.round(rawDiscount);
+    const gross = Math.round(quantity * unitPrice);
+    if (itemDiscount > gross) throw new Error('تخفیف هر ردیف نمی‌تواند از مبلغ همان ردیف بیشتر باشد.');
     return {
       productId: Number(item.productId),
       quantity,
       unitPrice,
       discount: itemDiscount,
-      total: Math.max(0, Math.round(quantity * unitPrice) - itemDiscount)
+      total: gross - itemDiscount
     };
   });
   if (!items.length) throw new Error('خرید باید حداقل یک کالا داشته باشد.');
 
   validateInventoryQuantities(db, items);
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
-  const discount = Math.max(0, Math.round(Number(payload.discount) || 0));
-  const tax = Math.max(0, Math.round(Number(payload.tax) || 0));
-  const total = Math.max(0, subtotal - discount + tax);
+  const rawDiscount = Number(payload.discount ?? 0);
+  const rawTax = Number(payload.tax ?? 0);
+  if (!Number.isFinite(rawDiscount) || rawDiscount < 0 || !Number.isFinite(rawTax) || rawTax < 0) {
+    throw new Error('تخفیف یا مالیات فاکتور نامعتبر است.');
+  }
+  const discount = Math.round(rawDiscount);
+  const tax = Math.round(rawTax);
+  if (discount > subtotal) throw new Error('تخفیف فاکتور نمی‌تواند از جمع اقلام بیشتر باشد.');
+  const total = subtotal - discount + tax;
   const paymentTotals = normalizeInvoicePayments(payload.payments, total, Number(payload.paidAmount || 0) / 100);
   const paidAmount = paymentTotals.paidAmount;
   const date = normalizeInvoiceDate(payload.date);
@@ -579,6 +591,23 @@ function updateSale(id, payload = {}) {
   const existing = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
   if (!existing) throw new Error('فاکتور پیدا نشد.');
   if (existing.status === 'cancelled') throw new Error('فاکتور لغوشده قابل ویرایش نیست.');
+  const returnHistory = db.prepare('SELECT COUNT(*) AS count FROM sales_returns WHERE sale_id = ?').get(saleId);
+  if (Number(returnHistory.count) > 0) {
+    throw new Error('فاکتوری که سابقهٔ مرجوعی دارد قابل ویرایش نیست. برای اصلاح، فاکتور را لغو و فاکتور جدید ثبت کنید.');
+  }
+  const installmentHistory = db.prepare(`
+    SELECT COUNT(*) AS count FROM installment_plans
+    WHERE invoice_kind = 'sale' AND invoice_id = ? AND status <> 'cancelled'
+  `).get(saleId);
+  const installmentPayments = db.prepare(`
+    SELECT COUNT(*) AS count FROM installment_payments ip
+    JOIN installments i ON i.id = ip.installment_id
+    JOIN installment_plans p ON p.id = i.plan_id
+    WHERE p.invoice_kind = 'sale' AND p.invoice_id = ?
+  `).get(saleId);
+  if (Number(installmentHistory.count) > 0 || Number(installmentPayments.count) > 0) {
+    throw new Error('فاکتور دارای برنامه یا سابقهٔ پرداخت اقساط قابل ویرایش نیست. برای اصلاح، فاکتور جدید ثبت کنید.');
+  }
   const baseTotals = calculateSaleTotals(payload.items, payload.discount, payload.tax, 0);
   validateInventoryQuantities(db, baseTotals.items);
   const paymentTotals = normalizeInvoicePayments(payload.payments, baseTotals.total, payload.paidAmount);

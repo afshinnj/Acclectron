@@ -95,7 +95,7 @@ async function loadReturnsPage() {
     const body = $('#returnItemsTable');
     if (!saleId) { body.innerHTML = '<tr class="empty-row"><td colspan="4">ابتدا فاکتور را انتخاب کنید.</td></tr>'; return; }
     const invoice = await window.api.invoices.details('sale', saleId);
-    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small><input type="hidden" class="return-sale-item" value="${item.id}"></td><td>${item.quantity}</td><td><input class="return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="0.01" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
+    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small><input type="hidden" class="return-sale-item" value="${item.id}"></td><td>${item.quantity}</td><td><input class="return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
   };
   select.onchange = () => renderSale().catch((e) => showToast(e.message, true));
   $('#refreshReturns').onclick = () => loadReturnsPage().catch((e) => showToast(e.message, true));
@@ -119,7 +119,7 @@ async function loadReturnsPage() {
     const body = $('#purchaseReturnItemsTable');
     if (!purchaseId) { body.innerHTML = '<tr class="empty-row"><td colspan="4">ابتدا فاکتور خرید را انتخاب کنید.</td></tr>'; return; }
     const invoice = await window.api.invoices.details('purchase', purchaseId);
-    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small></td><td>${item.quantity}</td><td><input class="purchase-return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="0.01" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
+    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small></td><td>${item.quantity}</td><td><input class="purchase-return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
   };
   purchaseSelect.onchange = () => renderPurchase().catch((e) => showToast(e.message, true));
   $('#savePurchaseReturn').onclick = async () => {

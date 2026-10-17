@@ -3,6 +3,7 @@
 // into a structured plan (product selection + optional price adjustment),
 // previewable and editable before anything is written to the database.
 const { normalizeProductText, rankProductsBySimilarity } = require('./semantic');
+const { tryAnswerQuestion, answerFiltered } = require('./qa');
 const { listProducts, getProduct, updateProductQuick, auditLog, requireDatabase, runInTransaction } = require('../database');
 
 const safeParse = (text) => {
@@ -91,8 +92,15 @@ function previewPrices(product, action) {
   return next;
 }
 
-async function planCommand(rawText, modelRoots = [], previousProductIds = []) {
+async function planCommand(rawText, modelRoots = [], previousProductIds = [], context = {}) {
   const { action, selectionPhrase, columns } = parseCommand(rawText, { allowEmptySelection: true });
+  // Statistical questions ("تعداد محصولات چنده؟") have no product selection;
+  // answer them from the database before the listing machinery rejects them.
+  // A question with a product filter ("تعداد محصولات لباسشویی") is resolved
+  // after the matching pipeline below, so it reuses the same keyword/semantic
+  // ranking as an ordinary listing request.
+  const qa = tryAnswerQuestion(rawText, action, context);
+  if (qa && !qa.qaFilter) return qa;
   const all = listProducts('', '');
   const buildPlan = (products, matchMode) => ({
     action,
@@ -117,7 +125,7 @@ async function planCommand(rawText, modelRoots = [], previousProductIds = []) {
     if (action.type === 'adjust' && continued.length) return buildPlan(continued, 'continued');
     throw new Error('ابتدا کالاها را با یک جمله مثل «لیست پمپ تخلیه لباسشویی» فهرست کنید؛ بعد می‌توانید فقط بگویید «۵۰ درصد به قیمت فروش اضافه کن».');
   }
-  const tokens = selectionPhrase.split(/\s+/).filter(Boolean);
+  const tokens = (qa?.qaFilter?.phrase || selectionPhrase).split(/\s+/).filter(Boolean);
   let matchMode = 'keyword';
   const haystackOf = (product) => normalizeCommandText(
     [product.name, product.code, product.barcode, product.categoryName].filter(Boolean).join(' ')
@@ -146,6 +154,10 @@ async function planCommand(rawText, modelRoots = [], previousProductIds = []) {
     } catch {
       // Semantic model unavailable: fall through with an empty keyword match.
     }
+  }
+  if (qa && qa.qaFilter) {
+    const filtered = answerFiltered(qa.qaFilter.kind, matched, qa.qaFilter.phrase);
+    if (filtered) return filtered;
   }
   return buildPlan(matched, matchMode);
 }

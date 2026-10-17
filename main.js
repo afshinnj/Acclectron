@@ -358,7 +358,8 @@ function registerIpcHandlers() {
   secureHandle('ai:assistant-plan', async (_event, payload = {}) => planCommand(
     String(payload.text || ''),
     aiModelRoots,
-    Array.isArray(payload.previousIds) ? payload.previousIds : []
+    Array.isArray(payload.previousIds) ? payload.previousIds : [],
+    payload.context && typeof payload.context === 'object' ? payload.context : {}
   ));
   secureHandle('ai:assistant-apply', (_event, payload = {}) => applyProductUpdates(payload.updates || []));
   secureHandle('ai:assistant-undo', () => undoLastAssistantApply());

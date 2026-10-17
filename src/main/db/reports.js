@@ -4,7 +4,40 @@
 const { requireDatabase } = require('./core');
 const { refreshInstallmentStatuses } = require('./payments');
 const { buildSalesForecast } = require('../domain/forecast');
-const { jalaliMonthRangeIso, localDateIso } = require('../domain/dates');
+const { gregorianToJalali, jalaliMonthRangeIso, jalaliToGregorianIso, localDateIso } = require('../domain/dates');
+
+function jalaliPeriodKey(isoDate, period) {
+  if (period === 'day') return isoDate;
+  if (period === 'week') {
+    const start = new Date(`${isoDate}T00:00:00Z`);
+    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 1) % 7));
+    return start.toISOString().slice(0, 10);
+  }
+  const [year, month] = gregorianToJalali(...isoDate.split('-').map(Number));
+  return period === 'year' ? String(year) : `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function jalaliForecastPeriods(today, period) {
+  const [currentYear, currentMonth] = gregorianToJalali(...today.split('-').map(Number));
+  const count = period === 'year' ? 5 : 12;
+  const periods = [];
+  let start;
+  if (period === 'year') {
+    const firstYear = currentYear - count + 1;
+    start = jalaliToGregorianIso(firstYear, 1, 1);
+    for (let year = firstYear; year <= currentYear; year += 1) periods.push(String(year));
+  } else {
+    const firstMonthIndex = currentYear * 12 + currentMonth - count;
+    const firstYear = Math.floor(firstMonthIndex / 12);
+    const firstMonth = (firstMonthIndex % 12) + 1;
+    start = jalaliToGregorianIso(firstYear, firstMonth, 1);
+    for (let offset = 0; offset < count; offset += 1) {
+      const monthIndex = firstMonthIndex + offset;
+      periods.push(`${Math.floor(monthIndex / 12)}-${String((monthIndex % 12) + 1).padStart(2, '0')}`);
+    }
+  }
+  return { from: start, periods };
+}
 
 function getDashboardSummary(payload = {}) {
   const db = requireDatabase();
@@ -378,6 +411,9 @@ function getSalesReport(payload = {}) {
       s.source AS source,
       COALESCE(NULLIF(TRIM(s.party_name), ''), 'مشتری متفرقه') AS customerName,
       sri.product_id AS productId,
+      COALESCE(p.name, '') AS productName,
+      COALESCE(p.code, '') AS productCode,
+      COALESCE(c.name, '') AS categoryName,
       COALESCE(sri.quantity, 0) AS quantity,
       COALESCE(sri.total, 0) AS itemValue,
       COALESCE(sri.total, 0)
@@ -389,6 +425,8 @@ function getSalesReport(payload = {}) {
     JOIN sales s ON s.id = sr.sale_id
     JOIN sales_return_items sri ON sri.return_id = sr.id
     LEFT JOIN sale_items si ON si.id = sri.sale_item_id
+    LEFT JOIN products p ON p.id = sri.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
     WHERE ${returnWhere}
   `).all(...returnParams);
 
@@ -441,31 +479,73 @@ function getSalesReport(payload = {}) {
     row.itemCount = Number(row.itemCount) - r.quantity;
     row.profitTotal = Number(row.netSales) - Number(row.costTotal);
   }
-  for (const row of byPeriod) {
-    const r = get(byPeriodReturns, row.period);
-    row.netSales = Number(row.netSales) - r.netValue;
-    row.costTotal = Number(row.costTotal) - r.costValue;
-    row.itemCount = Number(row.itemCount) - r.quantity;
+  // Returns are attributed to the date they were recorded. A return can fall
+  // in a period with no sales (or refer to a sale outside the selected range),
+  // so create negative-only buckets instead of silently dropping it from the
+  // period/source/customer/product breakdowns.
+  const ensureBucket = (rows, key, keyOf, create) => {
+    let row = rows.find((candidate) => keyOf(candidate) === key);
+    if (!row) {
+      row = create();
+      rows.push(row);
+    }
+    return row;
+  };
+  for (const [periodKey, returned] of byPeriodReturns) {
+    const row = ensureBucket(byPeriod, periodKey, (candidate) => candidate.period, () => ({
+      period: periodKey, invoiceCount: 0, itemCount: 0, total: 0, netSales: 0,
+      costTotal: 0, profitTotal: 0, paidAmount: 0, remainingAmount: 0,
+      dailyCount: 0, formalCount: 0
+    }));
+    row.netSales = Number(row.netSales) - returned.netValue;
+    row.costTotal = Number(row.costTotal) - returned.costValue;
+    row.itemCount = Number(row.itemCount) - returned.quantity;
     row.profitTotal = Number(row.netSales) - Number(row.costTotal);
   }
-  for (const row of bySource) {
-    const r = get(bySourceReturns, row.source);
-    row.netSales = Number(row.netSales) - r.netValue;
-    row.costTotal = Number(row.costTotal) - r.costValue;
+  for (const [sourceKey, returned] of bySourceReturns) {
+    const row = ensureBucket(bySource, sourceKey, (candidate) => candidate.source, () => ({
+      source: sourceKey, invoiceCount: 0, total: 0, netSales: 0, costTotal: 0, profitTotal: 0
+    }));
+    row.total = Number(row.total) - returned.itemValue;
+    row.netSales = Number(row.netSales) - returned.netValue;
+    row.costTotal = Number(row.costTotal) - returned.costValue;
     row.profitTotal = Number(row.netSales) - Number(row.costTotal);
   }
-  for (const row of byCustomer) {
-    const r = get(byCustomerReturns, row.customerName);
-    row.total = Number(row.total) - r.netValue;
-    row.profitTotal = Number(row.profitTotal) - (r.netValue - r.costValue);
+  for (const [customerKey, returned] of byCustomerReturns) {
+    const row = ensureBucket(byCustomer, customerKey, (candidate) => candidate.customerName, () => ({
+      customerName: customerKey, invoiceCount: 0, total: 0, profitTotal: 0
+    }));
+    row.total = Number(row.total) - returned.netValue;
+    row.profitTotal = Number(row.profitTotal) - returned.netValue + returned.costValue;
   }
-  for (const row of byProduct) {
-    const r = get(byProductReturns, Number(row.productId));
-    row.quantity = Number(row.quantity) - r.quantity;
-    row.netSales = Number(row.netSales) - r.itemValue;
-    row.costTotal = Number(row.costTotal) - r.costValue;
-    row.profitTotal = Number(row.profitTotal) - (r.netValue - r.costValue);
+  for (const [productId, returned] of byProductReturns) {
+    const detail = returnRows.find((candidate) => Number(candidate.productId) === productId);
+    if (!detail) continue;
+    const row = ensureBucket(byProduct, productId, (candidate) => Number(candidate.productId), () => ({
+      productId, name: detail.productName, code: detail.productCode, categoryName: detail.categoryName,
+      quantity: 0, netSales: 0, costTotal: 0, profitTotal: 0
+    }));
+    row.quantity = Number(row.quantity) - returned.quantity;
+    row.netSales = Number(row.netSales) - returned.itemValue;
+    row.costTotal = Number(row.costTotal) - returned.costValue;
+    row.profitTotal = Number(row.profitTotal) - returned.netValue + returned.costValue;
   }
+  // A return can be recorded on a day with no sale. Keep that day in a pinned
+  // daily report so its negative net sales and returned cost are not lost.
+  const salesDates = new Set(byDate.map((row) => row.date));
+  for (const [date, returned] of byDateReturns) {
+    if (salesDates.has(date)) continue;
+    byDate.push({
+      date, invoiceCount: 0, itemCount: -returned.quantity, total: 0,
+      netSales: -returned.netValue, costTotal: -returned.costValue,
+      profitTotal: -returned.netValue + returned.costValue, dailyCount: 0, formalCount: 0
+    });
+  }
+  byDate.sort((a, b) => a.date.localeCompare(b.date));
+  byPeriod.sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  bySource.sort((a, b) => String(a.source).localeCompare(String(b.source)));
+  byCustomer.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+  byProduct.sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
 
   const summaryRow = castRows([summary])[0];
   summaryRow.returnsTotal = totals.netValue;
@@ -506,8 +586,24 @@ function getSalesReport(payload = {}) {
 
 function getSalesForecast(payload = {}) {
   const period = String(payload.period || '') === 'year' ? 'year' : 'month';
-  const report = getSalesReport({ period, source: payload.source });
-  return buildSalesForecast(report.byPeriod, { period, horizon: payload.horizon });
+  const today = localDateIso();
+  const window = jalaliForecastPeriods(today, period);
+  const report = getSalesReport({ from: window.from, to: today, source: payload.source, period: 'day' });
+  if (!Number(report.summary?.invoiceCount) && !Number(report.summary?.returnsCount)) {
+    return buildSalesForecast([], { period, horizon: payload.horizon });
+  }
+  const byPeriod = new Map(window.periods.map((key) => [key, {
+    period: key, netSales: 0, profitTotal: 0, invoiceCount: 0
+  }]));
+  for (const row of report.byDate) {
+    const key = jalaliPeriodKey(row.date, period);
+    const bucket = byPeriod.get(key);
+    if (!bucket) continue;
+    bucket.netSales += Number(row.netSales || 0);
+    bucket.profitTotal += Number(row.profitTotal || 0);
+    bucket.invoiceCount += Number(row.invoiceCount || 0);
+  }
+  return buildSalesForecast([...byPeriod.values()], { period, horizon: payload.horizon });
 }
 
 function getProfitLossReport(payload = {}) {

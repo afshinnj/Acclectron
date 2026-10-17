@@ -99,3 +99,39 @@ test('daily report rows cover the whole selected date range', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('return-only reporting periods remain visible in every sales breakdown', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'accletron-return-only-report-'));
+  const db = getDatabase(directory);
+  try {
+    loginUser('admin', 'admin123');
+    const productResult = db.prepare(
+      "INSERT INTO products (code, name, sale_price, stock, purchase_price) VALUES ('RET-ONLY', 'کالای مرجوعی', 100000000, 100, 50000000)"
+    ).run();
+    const productId = Number(productResult.lastInsertRowid);
+    const sale = createSale({
+      date: '2026-02-28', source: 'invoice', partyName: 'مشتری مرجوعی', paidAmount: 1000000,
+      items: [{ productId, quantity: 1, unitPrice: 1000000 }]
+    });
+    const details = getInvoiceDetails('sale', sale.id);
+    createSaleReturn({
+      saleId: sale.id, date: '2026-03-01', refundAmount: 1000000,
+      items: [{ saleItemId: Number(details.items[0].id), quantity: 1 }]
+    });
+
+    const report = getSalesReport({ from: '2026-03-01', to: '2026-03-31', period: 'month' });
+    assert.equal(report.summary.invoiceCount, 0);
+    assert.equal(report.summary.netSales, -100000000);
+    assert.deepEqual(report.byPeriod.map((row) => [row.period, row.netSales, row.profitTotal]), [
+      ['2026-03', -100000000, -50000000]
+    ]);
+    assert.deepEqual(report.bySource.map((row) => [row.source, row.netSales]), [['invoice', -100000000]]);
+    assert.deepEqual(report.byCustomer.map((row) => [row.customerName, row.total]), [['مشتری مرجوعی', -100000000]]);
+    assert.deepEqual(report.byProduct.map((row) => [row.productId, row.quantity, row.netSales]), [
+      [productId, -1, -100000000]
+    ]);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

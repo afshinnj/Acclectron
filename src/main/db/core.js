@@ -11,6 +11,19 @@ let database;
 
 let currentUserId = null;
 
+const DATABASE_MIGRATIONS = [
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sales_status_date ON sales(status, date);
+        CREATE INDEX IF NOT EXISTS idx_purchases_status_date ON purchases(status, date);
+      `);
+    }
+  }
+];
+const CURRENT_DB_SCHEMA_VERSION = Math.max(1, ...DATABASE_MIGRATIONS.map((migration) => migration.version));
+
 const ROLE_PERMISSIONS = {
   admin: ['*'],
   manager: ['sales', 'purchases', 'returns', 'cash', 'inventory', 'products', 'parties', 'reports', 'settings', 'users'],
@@ -54,6 +67,15 @@ function getDatabase(userDataPath) {
   const dataDirectory = userDataPath || path.join(process.cwd(), 'data');
   fs.mkdirSync(dataDirectory, { recursive: true });
   database = normalizeDatabaseRows(new DatabaseSync(path.join(dataDirectory, 'accletron.db')));
+  const migrationTableExists = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+  if (migrationTableExists) {
+    const installedVersion = Number(database.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get().version);
+    if (installedVersion > CURRENT_DB_SCHEMA_VERSION) {
+      database.close();
+      database = undefined;
+      throw new Error(`این دیتابیس به نسخهٔ ساختار ${installedVersion} نیاز دارد؛ نسخهٔ برنامه از ${CURRENT_DB_SCHEMA_VERSION} پشتیبانی می‌کند.`);
+    }
+  }
   database.exec(`
     PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = WAL;
@@ -505,6 +527,19 @@ function getDatabase(userDataPath) {
     insertUnit.run('کارتن', 'کارتن', 0, 0);
   }
   database.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(1);
+  for (const migration of DATABASE_MIGRATIONS) {
+    const applied = database.prepare('SELECT 1 AS present FROM schema_migrations WHERE version = ?').get(migration.version);
+    if (applied) continue;
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      migration.up(database);
+      database.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(migration.version);
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
 
   const userCount = database.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (userCount === 0) {
@@ -610,4 +645,4 @@ function closeDatabase() {
   currentUserId = null;
 }
 
-module.exports = { addColumnIfMissing, auditLog, closeDatabase, getCurrentUser, getDatabase, hashPassword, normalizeDatabaseRows, normalizeSearchText, requireDatabase, requirePermission, runInTransaction, setCurrentUser, tableColumns, toPlainRow };
+module.exports = { addColumnIfMissing, auditLog, closeDatabase, CURRENT_DB_SCHEMA_VERSION, getCurrentUser, getDatabase, hashPassword, normalizeDatabaseRows, normalizeSearchText, requireDatabase, requirePermission, runInTransaction, setCurrentUser, tableColumns, toPlainRow };

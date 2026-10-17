@@ -98,6 +98,8 @@ const {
 } = require('./src/main/database');
 const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
 const { planCommand, applyProductUpdates, undoLastAssistantApply } = require('./src/main/ai/assistant');
+const { isTrustedAppUrl, isTrustedAppSender } = require('./src/main/security');
+const { restoreDatabaseFile } = require('./src/main/db/backup');
 
 // Keep the main process alive on unexpected errors and leave a trace on disk
 // (userData/logs, newest 10 files) so failures can be diagnosed afterwards.
@@ -105,8 +107,20 @@ function appendProcessLog(scope, error) {
   try {
     const dir = path.join(app.getPath('userData'), 'logs');
     fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `main-${new Date().toISOString().slice(0, 10)}.log`);
-    fs.appendFileSync(file, `[${new Date().toISOString()}] ${scope}: ${error?.stack || error?.message || String(error)}\n`, 'utf8');
+    const prefix = path.join(dir, `main-${new Date().toISOString().slice(0, 10)}`);
+    const file = `${prefix}.log`;
+    const maxBytes = 2 * 1024 * 1024;
+    if (fs.existsSync(file) && fs.statSync(file).size >= maxBytes) {
+      const oldest = `${prefix}-3.log`;
+      if (fs.existsSync(oldest)) fs.rmSync(oldest, { force: true });
+      for (let index = 2; index >= 1; index -= 1) {
+        const previous = `${prefix}-${index}.log`;
+        if (fs.existsSync(previous)) fs.renameSync(previous, `${prefix}-${index + 1}.log`);
+      }
+      fs.renameSync(file, `${prefix}-1.log`);
+    }
+    const details = String(error?.stack || error?.message || error).slice(0, 16000);
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${scope}: ${details}\n`, 'utf8');
   } catch {
     // Logging must never itself crash the app.
   }
@@ -116,10 +130,10 @@ function pruneOldLogs(keep = 10) {
   try {
     const dir = path.join(app.getPath('userData'), 'logs');
     const files = fs.readdirSync(dir)
-      .filter((name) => /^main-\d{4}-\d{2}-\d{2}\.log$/.test(name))
-      .sort()
-      .reverse();
-    for (const name of files.slice(keep)) fs.rmSync(path.join(dir, name), { force: true });
+      .filter((name) => /^main-\d{4}-\d{2}-\d{2}(?:-\d+)?\.log$/.test(name))
+      .map((name) => ({ name, modified: fs.statSync(path.join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.modified - a.modified);
+    for (const entry of files.slice(keep)) fs.rmSync(path.join(dir, entry.name), { force: true });
   } catch {}
 }
 
@@ -136,17 +150,7 @@ const appIconPath = path.join(__dirname, 'assets', 'icon.png');
 
 // The renderer must never navigate away from the packaged app files: remote or
 // foreign local content would still reach the privileged preload bridge.
-const isAllowedAppUrl = (url) => {
-  try {
-    const target = new URL(url);
-    if (target.protocol !== 'file:') return false;
-    const targetPath = path.normalize(decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:)/, '$1'));
-    const relative = path.relative(__dirname, targetPath);
-    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-  } catch {
-    return false;
-  }
-};
+const isAllowedAppUrl = (url) => isTrustedAppUrl(url, __dirname);
 
 function hardenWebContents(webContents) {
   webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -217,6 +221,9 @@ function registerIpcHandlers() {
     'users:set-active': 'users'
   };
   const secureHandle = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) {
+      throw new Error('درخواست از پنجرهٔ مجاز برنامه دریافت نشد.');
+    }
     if (PUBLIC_IPC_CHANNELS.has(channel)) return handler(event, ...args);
     const permission = IPC_PERMISSIONS[channel];
     if (permission) requirePermission(permission);
@@ -492,16 +499,12 @@ function registerIpcHandlers() {
     if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
     const source = selection.filePaths[0];
     const target = path.join(app.getPath('userData'), 'accletron.db');
-    if (path.resolve(source).toLowerCase() === path.resolve(target).toLowerCase()) throw new Error('فایل پشتیبان با دیتابیس فعلی یکسان است.');
-    closeDatabase();
-    // Stale journal sidecars of the previous database must not survive a restore.
-    for (const suffix of ['-wal', '-shm', '-journal']) {
-      const sidecar = `${target}${suffix}`;
-      if (fs.existsSync(sidecar)) fs.rmSync(sidecar);
-    }
-    fs.copyFileSync(source, target);
-    getDatabase(app.getPath('userData'));
-    return { canceled: false, path: source };
+    const restored = restoreDatabaseFile(source, target, {
+      closeDatabase,
+      reopenDatabase: () => getDatabase(app.getPath('userData')),
+      createSafetyBackup: () => backupDatabase(getAppSettings().backup?.path).path
+    });
+    return { canceled: false, path: restored.path, safetyBackupPath: restored.safetyPath };
   });
   secureHandle('customers:search', (_event, query = '') => searchCustomers(query));
   secureHandle('parties:list', (_event, payload = {}) => listParties(payload.query, payload.type, payload.includeInactive !== false));
@@ -636,14 +639,22 @@ function registerIpcHandlers() {
   secureHandle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
   secureHandle('daily-close:details', (_event, id) => getDailyClosure(id));
   secureHandle('daily-close:list', (_event, payload) => listDailyClosures(payload));
-  ipcMain.on('window:minimize', () => mainWindow?.minimize());
-  ipcMain.on('window:toggle-maximize', () => {
+  ipcMain.on('window:minimize', (event) => {
+    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
+    mainWindow?.minimize();
+  });
+  ipcMain.on('window:toggle-maximize', (event) => {
+    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
     if (!mainWindow) return;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
   });
-  ipcMain.on('window:close', () => mainWindow?.webContents.send('window:close-requested'));
-  ipcMain.on('window:close-confirmed', () => {
+  ipcMain.on('window:close', (event) => {
+    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
+    mainWindow?.webContents.send('window:close-requested');
+  });
+  ipcMain.on('window:close-confirmed', (event) => {
+    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
     isWindowCloseApproved = true;
     // Confirmed close minimises to the system tray rather than terminating;
     // "خروج کامل" in the tray context menu is the only true exit path.
@@ -700,14 +711,29 @@ function startOfficialUse() {
   const backup = backupDatabase(settings.backup?.path);
 
   closeDatabase();
-  for (const suffix of ['', '-wal', '-shm', '-journal']) {
-    const file = `${source}${suffix}`;
-    if (fs.existsSync(file)) fs.rmSync(file);
+  try {
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const file = `${source}${suffix}`;
+      if (fs.existsSync(file)) fs.rmSync(file);
+    }
+    getDatabase(userDataPath);
+    saveAppSettings(settings);
+    return { backupPath: backup.path };
+  } catch (error) {
+    closeDatabase();
+    try {
+      for (const suffix of ['-wal', '-shm', '-journal']) {
+        const sidecar = `${source}${suffix}`;
+        if (fs.existsSync(sidecar)) fs.rmSync(sidecar);
+      }
+      fs.copyFileSync(backup.path, source);
+      getDatabase(userDataPath);
+      throw error;
+    } catch (recoveryError) {
+      if (recoveryError === error) throw error;
+      throw new Error(`شروع رسمی کامل نشد. نسخهٔ ایمن داده‌ها در ${backup.path} نگهداری شده است.`, { cause: recoveryError });
+    }
   }
-  getDatabase(userDataPath);
-  saveAppSettings(settings);
-
-  return { backupPath: backup.path };
 }
 
 function runAutoBackupIfDue() {
@@ -757,6 +783,14 @@ const createWindow = () => {
   });
 
   hardenWebContents(mainWindow.webContents);
+  mainWindow.webContents.on('console-message', (_event, details) => {
+    if (details?.level !== 'error') return;
+    const location = `${details.sourceId || 'renderer'}:${details.lineNumber || 0}`;
+    appendProcessLog('renderer-console', new Error(`${details.message} (${location})`));
+  });
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    appendProcessLog('preload-error', new Error(`${preloadPath}: ${error?.stack || error?.message || error}`));
+  });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     appendProcessLog('render-process-gone', new Error(`${details.reason} (exitCode=${details.exitCode})`));
     // Bring the UI back instead of leaving a dead window; unsaved in-form
@@ -834,6 +868,11 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((error) => {
+  appendProcessLog('startup', error);
+  try { closeDatabase(); } catch {}
+  dialog.showErrorBox('Acclectron could not start', String(error?.message || error));
+  app.quit();
 });
 
 app.on('before-quit', () => {

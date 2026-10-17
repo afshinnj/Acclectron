@@ -188,7 +188,7 @@ if (backupPanel && !$('#v2Restore')) {
   backupPanel.insertAdjacentHTML('afterbegin', '<button id="v2Restore" type="button" class="secondary">بازیابی پشتیبان</button>');
   $('#v2Restore').addEventListener('click', async () => {
     if (!await showConfirmDialog({ title: 'بازیابی پشتیبان', message: 'بازیابی پشتیبان، داده‌های فعلی را جایگزین می‌کند. ادامه می‌دهید؟', confirmText: 'بازیابی پشتیبان', destructive: true })) return;
-    try { const result = await window.api.settings.restore(); if (!result.canceled) { showToast('پشتیبان بازیابی شد؛ برنامه را دوباره باز کنید.'); } } catch (e) { showToast(e.message, true); }
+    try { const result = await window.api.settings.restore(); if (!result.canceled) { showToast(`پشتیبان بازیابی شد؛ نسخهٔ قبلی در مسیر زیر ذخیره شد. برنامه را دوباره باز کنید: ${result.safetyBackupPath}`); } } catch (e) { showToast(e.message, true); }
   });
 }
 if (backupPanel && !$('#v2OfficialStart')) {

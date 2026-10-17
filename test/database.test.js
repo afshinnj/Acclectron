@@ -87,10 +87,89 @@ test('creates the product and purchase foundation with foreign keys and indexes'
     }
     assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_purchase_items_product_id'").get());
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_sales_status_date'").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_purchases_status_date'").get());
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM products').get().count, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM customers').get().count, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM units').get().count, 8);
     assert.ok(db.prepare("SELECT id FROM users WHERE username = 'admin'").get());
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('reapplies a missing additive migration on an existing database', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    db.exec('DROP INDEX idx_sales_status_date; DELETE FROM schema_migrations WHERE version = 2;');
+    closeDatabase();
+    const reopened = getDatabase(directory);
+    assert.ok(reopened.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_sales_status_date'").get());
+    assert.equal(reopened.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('upgrades an unversioned legacy database in place and preserves its records', () => {
+  const { directory, db } = openTestDatabase();
+  try {
+    db.prepare('INSERT INTO products (code, name, sale_price, stock) VALUES (?, ?, ?, ?)')
+      .run('LEGACY-KEEP', 'Legacy product', 1200, 7);
+    db.exec('DELETE FROM schema_migrations; DROP INDEX idx_sales_status_date; DROP INDEX idx_purchases_status_date;');
+    closeDatabase();
+
+    const upgraded = getDatabase(directory);
+    assert.deepEqual({ ...upgraded.prepare('SELECT code, name, sale_price, stock FROM products WHERE code = ?').get('LEGACY-KEEP') }, {
+      code: 'LEGACY-KEEP', name: 'Legacy product', sale_price: 1200, stock: 7
+    });
+    assert.equal(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+    assert.ok(upgraded.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_sales_status_date'").get());
+    assert.ok(upgraded.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_purchases_status_date'").get());
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('sale, partial return, over-return rejection, and return cancellation keep stock and ledger consistent', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    const category = db.prepare('INSERT INTO categories (code, name) VALUES (?, ?)').run('995', 'Return flow');
+    const product = createProduct({ name: 'Return flow test', categoryId: Number(category.lastInsertRowid), purchasePrice: 500, retailPrice: 900, stock: 10 });
+    const sale = createSale({
+      invoiceNumber: 'E2E-SALE-001', date: '2026-10-01',
+      items: [{ productId: product.id, quantity: 4, unitPrice: 900 }], paidAmount: 3600
+    });
+    assert.equal(sale.total, 360000);
+    assert.equal(sale.profitTotal, 358000);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 6);
+
+    const saleItemId = Number(db.prepare('SELECT id FROM sale_items WHERE sale_id = ?').get(sale.id).id);
+    const returned = createSaleReturn({ saleId: sale.id, items: [{ saleItemId, quantity: 2 }], refundAmount: 1800 });
+    assert.equal(returned.total, 180000);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 8);
+    assert.throws(() => createSaleReturn({ saleId: sale.id, items: [{ saleItemId, quantity: 3 }] }));
+
+    cancelSaleReturn(returned.id);
+    assert.equal(Number(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock), 6);
+    assert.equal(db.prepare('SELECT status FROM sales_returns WHERE id = ?').get(returned.id).status, 'cancelled');
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM cash_transactions WHERE reference_type = 'sales_return' AND reference_id = ?").get(returned.id).count, 0);
+  } finally {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('refuses to open a database created by a newer application schema', () => {
+  const { directory, db } = openTestDatabase({ fixtureProduct: false });
+  try {
+    db.prepare('INSERT INTO schema_migrations (version) VALUES (3)').run();
+    closeDatabase();
+    assert.throws(() => getDatabase(directory), /ساختار 3/);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

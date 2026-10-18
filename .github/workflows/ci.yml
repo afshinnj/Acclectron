@@ -14,7 +14,7 @@ permissions:
 jobs:
   verify-and-package:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -24,13 +24,29 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --registry=https://registry.npmjs.org
+      - name: Audit dependencies
+        run: npm audit --registry=https://registry.npmjs.org
       - name: Check JavaScript syntax
         run: npm run check
       - name: Run test suite
         run: npm test
+      - name: Verify menus, database rendering and invoice PDFs
+        run: npm run test:renderer
       - name: Build portable package
         run: npm run build:portable
+      - name: Verify packaged renderer and invoice PDFs
+        run: npm run test:packaged
+      - name: Build Windows installer
+        run: npm run build:installer
+      - name: Verify installer application archive
+        run: npm run test:installer
+      - name: Write installer checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item dist/installer/Acclectron-Setup-*.exe
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath "$($installer.FullName).sha256" -Encoding ascii
       - name: Upload portable package and verification files
         uses: actions/upload-artifact@v7
         with:
@@ -39,5 +55,7 @@ jobs:
             dist/Acclectron-*-portable.zip
             dist/Acclectron-*-portable.sha256
             dist/Acclectron-*-release-manifest.json
+            dist/installer/Acclectron-Setup-*.exe
+            dist/installer/Acclectron-Setup-*.exe.sha256
           if-no-files-found: error
           retention-days: 14

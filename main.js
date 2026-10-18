@@ -6,6 +6,7 @@ app.commandLine.appendSwitch('disable-gpu');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { getPrintOptions, getPdfOptions } = require('./src/main/print-layout');
 const { parseXlsxFile, normalizeProductRows } = require('./src/main/importer');
 const {
   closeDatabase,
@@ -139,54 +140,9 @@ function registerIpcHandlers() {
       isDefault: Boolean(printer.isDefault)
     }));
   });
-  const printPaperSizes = {
-    A4: { width: 210000, height: 297000 },
-    A5: { width: 148000, height: 210000 },
-    '80mm': { width: 80000, height: 200000 },
-    '58mm': { width: 58000, height: 200000 }
-  };
-  const validPaper = (value) => ['A4', 'A5', '80mm', '58mm'].includes(String(value)) ? String(value) : 'A4';
-  const validOrientation = (value) => ['portrait', 'landscape'].includes(String(value)) ? String(value) : 'portrait';
-  const validMargin = (value) => ['narrow', 'normal', 'wide'].includes(String(value)) ? String(value) : 'normal';
-  const resolvePrintLayout = (payload = {}) => {
-    const settings = getAppSettings();
-    const print = { ...(settings.print || {}), ...(payload.print || {}) };
-    const paperSize = validPaper(print.paperSize);
-    const orientation = validOrientation(print.orientation);
-    const size = { ...(printPaperSizes[paperSize] || printPaperSizes.A4) };
-    if (paperSize === '80mm' || paperSize === '58mm') {
-      const requestedHeight = Number(payload.contentHeightMicrons);
-      if (Number.isFinite(requestedHeight)) size.height = Math.max(40000, Math.min(1000000, Math.ceil(requestedHeight)));
-    }
-    return { print, paperSize, orientation, margin: validMargin(print.margin), size };
-  };
-  const getPrintOptions = (payload = {}) => {
-    const layout = resolvePrintLayout(payload);
-    const isThermal = layout.paperSize === '80mm' || layout.paperSize === '58mm';
-    const size = layout.orientation === 'landscape' && !isThermal
-      ? { width: layout.size.height, height: layout.size.width }
-      : layout.size;
-    const pageSize = ['A4', 'A5'].includes(layout.paperSize)
-      ? layout.paperSize
-      : size;
-    return {
-      layout,
-      options: {
-        silent: Boolean(layout.print.printerName) && !Boolean(layout.print.showPrintDialog),
-        printBackground: true,
-        color: layout.print.color !== false,
-        copies: Math.max(1, Math.min(10, Number(layout.print.copies || 1))),
-        margins: { marginType: 'none' },
-        landscape: layout.orientation === 'landscape' && !isThermal,
-        scaleFactor: 100,
-        pageSize
-      }
-    };
-  };
   secureHandle('print:invoice', async (_event, payload = {}) => {
     if (!mainWindow?.webContents) throw new Error('پنجره چاپ آماده نیست.');
-    const { options, layout } = getPrintOptions(payload);
-    if (layout.print.printerName) options.deviceName = String(layout.print.printerName);
+    const { options } = getPrintOptions(getAppSettings(), payload);
     return new Promise((resolve, reject) => {
       mainWindow.webContents.print(options, (success, reason) => {
         if (success) resolve({ success: true });
@@ -196,26 +152,13 @@ function registerIpcHandlers() {
   });
   secureHandle('pdf:invoice', async (_event, payload = {}) => {
     if (!mainWindow?.webContents) throw new Error('پنجره خروجی PDF آماده نیست.');
-    const { layout } = getPrintOptions(payload);
-    const isThermal = layout.paperSize === '80mm' || layout.paperSize === '58mm';
-    const widthInches = layout.size.width / 25400;
-    const heightInches = layout.size.height / 25400;
     const selection = await dialog.showSaveDialog(mainWindow, {
       title: 'ذخیره PDF فاکتور',
       defaultPath: String(payload.fileName || `فاکتور-${new Date().toISOString().slice(0, 10)}.pdf`).replace(/\.pdf$/i, '') + '.pdf',
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     });
     if (selection.canceled || !selection.filePath) return { canceled: true };
-    const pdfOptions = {
-      printBackground: true,
-      displayHeaderFooter: false,
-      preferCSSPageSize: true,
-      margins: { marginType: 'none' },
-      landscape: layout.orientation === 'landscape' && !isThermal,
-      pageSize: ['A4', 'A5'].includes(layout.paperSize)
-        ? layout.paperSize
-        : { width: layout.orientation === 'landscape' && !isThermal ? heightInches : widthInches, height: layout.orientation === 'landscape' && !isThermal ? widthInches : heightInches }
-    };
+    const pdfOptions = getPdfOptions(getAppSettings(), payload);
     const data = await mainWindow.webContents.printToPDF(pdfOptions);
     fs.writeFileSync(selection.filePath, data);
     return { canceled: false, filePath: selection.filePath };
@@ -590,9 +533,9 @@ const createWindow = () => {
   });
 
   hardenWebContents(mainWindow.webContents);
-  mainWindow.webContents.on('console-message', (_event, details, message, lineNumber, sourceId) => {
+  mainWindow.webContents.on('console-message', (event, details, message, lineNumber, sourceId) => {
     // Older Electron releases emit positional arguments and numeric levels.
-    if (typeof details !== 'object' || details === null) details = { level: details, message, lineNumber, sourceId };
+    if (typeof details !== 'object' || details === null) details = event.level ? event : { level: details, message, lineNumber, sourceId };
     if (details.level !== 'error' && details.level !== 3) return;
     const location = `${details.sourceId || 'renderer'}:${details.lineNumber || 0}`;
     appendProcessLog('renderer-console', new Error(`${details.message} (${location})`));

@@ -183,7 +183,7 @@ function invoicePrintPayload(settings) {
   const print = settings.print || {};
   const paper = String(print.paperSize || 'A4');
   if (!sheet || !['80mm', '58mm'].includes(paper)) return {};
-  const heightMm = Math.max(40, Math.ceil((sheet.scrollHeight * 25.4) / 96 + 2));
+  const heightMm = Math.max(40, Math.min(1000, Math.ceil((sheet.scrollHeight * 25.4) / 96 + 2)));
   syncInvoicePrintPageStyle(settings, heightMm);
   return { contentHeightMicrons: Math.ceil(heightMm * 1000) };
 }

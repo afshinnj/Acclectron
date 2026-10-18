@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('appInfo', {
   name: 'Acclectron',
-  version: '1.0.3'
+  version: '1.0.4'
 });
 
 contextBridge.exposeInMainWorld('api', {

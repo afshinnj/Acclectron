@@ -15,6 +15,10 @@ $outputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $appDir = Join-Path $outputRoot 'resources\app'
 $exePath = Join-Path $outputRoot 'Acclectron.exe'
 $distRoot = Join-Path $projectRoot 'dist'
+$allowedRoot = [System.IO.Path]::GetFullPath($distRoot).TrimEnd('\') + '\'
+if (-not $outputRoot.StartsWith($allowedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw 'Portable output must be a child directory of this project dist directory.'
+}
 $archivePath = Join-Path $distRoot "Acclectron-$version-portable.zip"
 $checksumPath = Join-Path $distRoot "Acclectron-$version-portable.sha256"
 $manifestPath = Join-Path $distRoot "Acclectron-$version-release-manifest.json"
@@ -52,7 +56,7 @@ Copy-Item -LiteralPath (Join-Path $electronDir 'electron.exe') -Destination $exe
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 Push-Location $appDir
 try {
-  & $npm ci --omit=dev
+  & $npm ci --omit=dev --registry=https://registry.npmjs.org --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) {
     throw "Installing production dependencies for the portable app failed (exit code $LASTEXITCODE)."
   }
@@ -63,8 +67,6 @@ finally {
 Get-ChildItem -LiteralPath $electronDir -Force |
   Where-Object { $_.Name -ne 'electron.exe' } |
   Copy-Item -Destination $outputRoot -Recurse -Force
-
-Rename-Item -LiteralPath $exePath -NewName 'Acclectron.exe' -Force
 
 $stubPath = Join-Path $outputRoot 'resources\default_app.asar'
 if (Test-Path $stubPath) {
@@ -91,6 +93,7 @@ $archiveSize = (Get-Item -LiteralPath $archivePath).Length
 $manifest = [ordered]@{
   product = [string]$package.productName
   version = $version
+  electronVersion = (Get-Content -LiteralPath (Join-Path $electronDir 'version') -Raw).Trim()
   artifact = Split-Path -Leaf $archivePath
   sha256 = $archiveHash
   sizeBytes = $archiveSize

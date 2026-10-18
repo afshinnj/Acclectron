@@ -1,4 +1,4 @@
-import { publishRendererBindings } from './shared/bridge.mjs';
+import { renderer, registerRendererBindings } from './shared/runtime.mjs';
 import { localDateIso } from './shared/date-utils.mjs';
 
 const state = { page: 'dashboard', items: [], products: [] };
@@ -46,17 +46,17 @@ function refreshAfterLogin() {
   // The daily-sales product grid is populated at boot, before any session
   // exists, so the IPC guard rejects that first load. Re-fetch it now that a
   // session is available, otherwise the grid stays empty until a manual search.
-  if ($('#saleProductCards')) loadSaleProducts().catch(() => {});
+  if ($('#saleProductCards')) renderer.loadSaleProducts().catch(() => {});
   window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
   // The keyboard-invoice catalogues, the settings page (units table, printer
   // list) and the semantic-search probe are likewise rejected before login and
   // only ever load from here.
   if ($('#salesInvoicePage')) {
-    loadKeyboardInvoice('sale').catch(() => {});
-    loadKeyboardInvoice('purchase').catch(() => {});
+    renderer.loadKeyboardInvoice('sale').catch(() => {});
+    renderer.loadKeyboardInvoice('purchase').catch(() => {});
   }
-  if (typeof refreshSettingsData === 'function') refreshSettingsData().catch(() => {});
-  if (typeof refreshSemanticStatus === 'function') refreshSemanticStatus();
+  if (typeof renderer.refreshSettingsData === 'function') renderer.refreshSettingsData().catch(() => {});
+  if (typeof renderer.refreshSemanticStatus === 'function') renderer.refreshSemanticStatus();
   refreshDailySaleCurrencyLabels();
 }
 let uiCurrency = { code: 'IRR', name: '\u0631\u06cc\u0627\u0644', symbol: '\u0631\u06cc\u0627\u0644', position: 'suffix', decimals: 0, separator: true, inputUnit: 'rial' };
@@ -131,14 +131,14 @@ function applyAppearanceSettings(appearance = {}) {
   document.documentElement.style.setProperty('--calendar', uiCalendar);
   document.querySelectorAll('input[type="date"], input.jalali-date-input').forEach((input) => {
     const parsed = previousCalendar === 'jalali' && !/^\d{4}-\d{2}-\d{2}$/.test(String(input.value || ''))
-      ? parseJalaliDate(input.value)
+      ? renderer.parseJalaliDate(input.value)
       : null;
-    const iso = parsed ? jalaliToGregorian(parsed.year, parsed.month, parsed.day) : input.value;
+    const iso = parsed ? renderer.jalaliToGregorian(parsed.year, parsed.month, parsed.day) : input.value;
     input.type = 'text';
     input.inputMode = 'numeric';
     input.autocomplete = 'off';
     input.classList.add('jalali-date-input');
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) input.value = isoToJalali(iso);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) input.value = renderer.isoToJalali(iso);
   });
 }
 
@@ -185,18 +185,18 @@ async function refreshCurrencyDisplays() {
   renderDashboardSkeleton();
   try { const summary = await window.api.dashboard.summary(); renderMetrics(summary); renderDashboard(summary); } catch {}
   refreshDailySaleCurrencyLabels();
-  if (saleState?.products?.length) renderSaleProducts();
-  if (saleState?.cart) renderSaleCart();
-  if (managementState?.products?.length) renderManagedProducts();
-  if (managementState?.parties?.length) renderManagedParties();
+  if (renderer.saleState?.products?.length) renderer.renderSaleProducts();
+  if (renderer.saleState?.cart) renderer.renderSaleCart();
+  if (renderer.managementState?.products?.length) renderer.renderManagedProducts();
+  if (renderer.managementState?.parties?.length) renderer.renderManagedParties();
   ['sale', 'purchase'].forEach((kind) => {
-    if (invoiceState?.[kind]?.items?.length) {
-      renderKeyboardItems(kind);
-      renderKeyboardSummary(kind);
+    if (renderer.invoiceState?.[kind]?.items?.length) {
+      renderer.renderKeyboardItems(kind);
+      renderer.renderKeyboardSummary(kind);
     }
   });
-  if ($('#salesTable') && !$('#salesPage')?.classList.contains('hidden')) loadInvoiceList('sales').catch(() => {});
-  if ($('#purchasesTable') && !$('#purchasesPage')?.classList.contains('hidden')) loadInvoiceList('purchases').catch(() => {});
+  if ($('#salesTable') && !$('#salesPage')?.classList.contains('hidden')) renderer.loadInvoiceList('sales').catch(() => {});
+  if ($('#purchasesTable') && !$('#purchasesPage')?.classList.contains('hidden')) renderer.loadInvoiceList('purchases').catch(() => {});
 }
 const normalizeDigits = (value) => String(value ?? '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
 // Unifies Persian/Arabic letter and digit variants so search ignores them:
@@ -273,7 +273,7 @@ let toastTimer;
 function showToast(message, error = false) {
   if (!uiNotifications) return;
   const toast = $('#toast');
-  toast.innerHTML = `<span class="toast-icon" aria-hidden="true">${error ? '✕' : '✓'}</span><span>${esc(message)}</span>`;
+  toast.innerHTML = `<span class="toast-icon" aria-hidden="true">${error ? '✕' : '✓'}</span><span>${renderer.esc(message)}</span>`;
   toast.style.background = error ? '#4b252f' : '#163c34';
   toast.style.color = error ? '#ffb0b2' : '#8af1c6';
   clearTimeout(toastTimer);
@@ -357,7 +357,7 @@ function initializeInstallmentNavigation() {
   if (nav && !nav.querySelector('[data-page="installments"]')) {
     const checks = nav.querySelector('[data-page="checks"]');
     checks?.insertAdjacentHTML('afterend', '<button class="nav-item" data-page="installments"><span>◫</span><span class="nav-label">اقساط و دریافت‌ها</span></button>');
-    nav.querySelector('[data-page="installments"]')?.addEventListener('click', () => setManagedPage('installments'));
+    nav.querySelector('[data-page="installments"]')?.addEventListener('click', () => renderer.setManagedPage('installments'));
   }
 }
 async function loadNotifications() {
@@ -371,16 +371,16 @@ async function loadNotifications() {
     $('#notificationSummary').innerHTML = `<span>همه: ${counts.total || 0}</span><span class="danger-text">مهم: ${counts.danger || 0}</span><span class="warning-text">هشدار: ${counts.warning || 0}</span><span>اطلاع: ${counts.info || 0}</span>`;
     const labels = { danger: 'مهم', warning: 'هشدار', info: 'اطلاع' };
     $('#notificationList').innerHTML = notificationState.alerts?.length
-      ? notificationState.alerts.map((item) => `<button class="notification-item ${item.severity}" data-page="${esc(item.actionPage || 'dashboard')}"><span class="notification-icon">${item.severity === 'danger' ? '!' : item.severity === 'warning' ? '⚠' : 'i'}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.message)}</small><em>${labels[item.severity] || ''}</em></span></button>`).join('')
+      ? notificationState.alerts.map((item) => `<button class="notification-item ${item.severity}" data-page="${renderer.esc(item.actionPage || 'dashboard')}"><span class="notification-icon">${item.severity === 'danger' ? '!' : item.severity === 'warning' ? '⚠' : 'i'}</span><span><strong>${renderer.esc(item.title)}</strong><small>${renderer.esc(item.message)}</small><em>${labels[item.severity] || ''}</em></span></button>`).join('')
       : '<div class="empty-state compact">هشداری برای نمایش وجود ندارد.</div>';
     $('#notificationList').onclick = (event) => {
       const item = event.target.closest('.notification-item');
       if (!item) return;
       $('#notificationModal').classList.add('hidden');
-      setManagedPage(item.dataset.page);
+      renderer.setManagedPage(item.dataset.page);
     };
   } catch (e) {
-    showToast(readableError(e, 'دریافت اعلان‌ها ناموفق بود.'), true);
+    showToast(renderer.readableError(e, 'دریافت اعلان‌ها ناموفق بود.'), true);
   }
 }
 
@@ -429,7 +429,7 @@ function initializeDashboardMarkup() {
   $('#dashboardReportPeriod').onchange = loadDashboardSalesPanel;
   $('#dashboardForecastPeriod').onchange = loadDashboardForecast;
   $('#dashboardForecastHorizon').onchange = loadDashboardForecast;
-  $('#dashboardReportOpen').onclick = () => setManagedPage('reports');
+  $('#dashboardReportOpen').onclick = () => renderer.setManagedPage('reports');
   if (sessionReady) {
     loadDashboardSalesPanel();
     loadDashboardForecast();
@@ -457,7 +457,7 @@ async function loadDashboardForecast() {
     };
     const history = (data.history || []).map((row) => ({ ...row, date: row.period, chartLabel: forecastLabel(row.period), forecast: 0 }));
     const predictions = (data.predictions || []).map((row) => ({ ...row, date: row.period, chartLabel: forecastLabel(row.period), forecast: row.netSales }));
-    reportSvgLine(chart, [...history, ...predictions], [{ key: 'netSales', label: 'فروش واقعی/پیش‌بینی', color: '#fbbf24' }, { key: 'forecast', label: 'پیش‌بینی', color: '#c084fc' }]);
+    renderer.reportSvgLine(chart, [...history, ...predictions], [{ key: 'netSales', label: 'فروش واقعی/پیش‌بینی', color: '#fbbf24' }, { key: 'forecast', label: 'پیش‌بینی', color: '#c084fc' }]);
     $('#dashboardForecastNote').textContent = `${data.note} · اطمینان: ${data.confidence}`;
   } catch {
     if (request !== dashboardForecastRequest) return;
@@ -492,11 +492,11 @@ function dashboardPeriodWindow(period) {
     const periods = Array.from({ length: 12 }, (_, index) => dashboardShiftIso(firstStart, index * 7));
     return { from: firstStart, to: today, periods, count: periods.length, label: '۱۲ هفتهٔ اخیر' };
   }
-  const [currentYear, currentMonth] = gregorianToJalali(...today.split('-').map(Number));
+  const [currentYear, currentMonth] = renderer.gregorianToJalali(...today.split('-').map(Number));
   if (period === 'year') {
     const firstYear = currentYear - 4;
     const periods = Array.from({ length: 5 }, (_, index) => String(firstYear + index));
-    return { from: jalaliToGregorian(firstYear, 1, 1), to: today, periods, count: periods.length, label: '۵ سال شمسی اخیر' };
+    return { from: renderer.jalaliToGregorian(firstYear, 1, 1), to: today, periods, count: periods.length, label: '۵ سال شمسی اخیر' };
   }
   const firstMonthIndex = currentYear * 12 + currentMonth - 12;
   const firstYear = Math.floor(firstMonthIndex / 12);
@@ -506,7 +506,7 @@ function dashboardPeriodWindow(period) {
     return `${Math.floor(monthIndex / 12)}-${String((monthIndex % 12) + 1).padStart(2, '0')}`;
   });
   return {
-    from: jalaliToGregorian(firstYear, firstMonth, 1), to: today, periods,
+    from: renderer.jalaliToGregorian(firstYear, firstMonth, 1), to: today, periods,
     count: periods.length, label: '۱۲ ماه شمسی اخیر'
   };
 }
@@ -518,14 +518,14 @@ function dashboardPeriodKey(iso, period) {
     date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 1) % 7));
     return date.toISOString().slice(0, 10);
   }
-  const [year, month] = gregorianToJalali(...iso.split('-').map(Number));
+  const [year, month] = renderer.gregorianToJalali(...iso.split('-').map(Number));
   return period === 'year' ? String(year) : `${year}-${String(month).padStart(2, '0')}`;
 }
 
 function dashboardPeriodChartLabel(key, period) {
   if (period === 'month') return key.replace('-', '/').replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
   if (period === 'year') return key.replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
-  return reportPeriodLabel(key);
+  return renderer.reportPeriodLabel(key);
 }
 
 async function loadDashboardSalesPanel() {
@@ -556,7 +556,7 @@ async function loadDashboardSalesPanel() {
     const previous = latestCompleteIndex > 0 ? Number(rows[latestCompleteIndex - 1].netSales || 0) : 0;
     const growth = previous > 0 ? ((latest - previous) / previous) * 100 : null;
     const labels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
-    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${analyticsWindow.label} · ${isoToJalali(analyticsWindow.from)} تا ${isoToJalali(analyticsWindow.to)}`;
+    $('#dashboardReportHint').textContent = `تجمیع ${labels[period]} · ${analyticsWindow.label} · ${renderer.isoToJalali(analyticsWindow.from)} تا ${renderer.isoToJalali(analyticsWindow.to)}`;
     $('#dashboardReportSales').textContent = money(totalSales);
     $('#dashboardReportProfit').textContent = money(totalProfit);
     $('#dashboardReportProfit').classList.toggle('negative', totalProfit < 0);
@@ -568,7 +568,7 @@ async function loadDashboardSalesPanel() {
     $('#dashboardReportGrowth').title = latestCompleteIndex >= 1
       ? `مقایسهٔ ${dashboardPeriodChartLabel(rows[latestCompleteIndex].period, period)} با ${dashboardPeriodChartLabel(rows[latestCompleteIndex - 1].period, period)}`
       : 'برای مقایسهٔ دوره‌ای دادهٔ کافی نیست.';
-    reportSvgLine(chart, rows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
+    renderer.reportSvgLine(chart, rows, [{ key: 'netSales', label: 'فروش خالص', color: '#38bdf8' }, { key: 'profitTotal', label: 'سود', color: '#4ade80' }]);
   } catch {
     if (request !== dashboardSalesRequest) return;
     chart.innerHTML = '<div class="empty-state compact">داده‌ای برای داشبورد تحلیلی وجود ندارد.</div>';
@@ -625,7 +625,7 @@ function renderDashboard(summary) {
     const kind = missing ? 'danger' : stale ? 'warning' : auto ? 'success' : 'muted';
     const label = missing ? 'پشتیبان‌گیری انجام نشده' : stale ? 'پشتیبان‌گیری قدیمی است' : auto ? 'پشتیبان‌گیری به‌روز است' : 'پشتیبان‌گیری خودکار خاموش است';
     chip.className = `dashboard-chip ${kind}`;
-    chip.innerHTML = `<i aria-hidden="true"></i><b>${esc(label)}</b>`;
+    chip.innerHTML = `<i aria-hidden="true"></i><b>${renderer.esc(label)}</b>`;
   }).catch(() => {});
   const weekdayNames = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'];
   const toPersianDigits = (value) => String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
@@ -661,12 +661,12 @@ function renderDashboard(summary) {
     if (!chip) return;
     if (!user) { chip.classList.add('hidden'); return; }
     chip.classList.remove('hidden');
-    chip.innerHTML = `<b>${esc(user.displayName || user.username)}</b><small>${esc(roleLabels[user.role] || user.role || '')}</small>`;
+    chip.innerHTML = `<b>${renderer.esc(user.displayName || user.username)}</b><small>${renderer.esc(roleLabels[user.role] || user.role || '')}</small>`;
     const greeting = $('#dashboardGreeting');
     if (greeting) greeting.textContent = `خوش آمدید، ${user.displayName || user.username}`;
   }).catch(() => {});
   const dateChip = $('#dashboardDateChip');
-  if (dateChip) dateChip.innerHTML = `<b>${esc(isoToJalali(anchorDate))}</b><small>${esc(weekdayNames[(new Date(`${anchorDate}T00:00:00Z`).getUTCDay() + 1) % 7])}</small>`;
+  if (dateChip) dateChip.innerHTML = `<b>${renderer.esc(renderer.isoToJalali(anchorDate))}</b><small>${renderer.esc(weekdayNames[(new Date(`${anchorDate}T00:00:00Z`).getUTCDay() + 1) % 7])}</small>`;
   const sparkValues = chartRows.map((row) => Number(row.sales || 0));
   const profitValues = chartRows.map((row) => Number(row.profit || 0));
   const salesSpark = $('#kpiSalesSpark');
@@ -682,7 +682,7 @@ function renderDashboard(summary) {
   const areaPath = `${linePath(sparkValues)} L${pointX(sparkValues.length - 1).toFixed(1)} ${(padTop + innerH).toFixed(1)} L${pointX(0).toFixed(1)} ${(padTop + innerH).toFixed(1)} Z`;
   const dayLabels = chartRows.map((row, index) => {
     const dayName = weekdayNames[(new Date(`${row.date}T00:00:00Z`).getUTCDay() + 1) % 7];
-    return `<text x="${pointX(index).toFixed(1)}" y="${chartH - 8}" text-anchor="middle" class="trend-axis-text">${esc(dayName)}</text>`;
+    return `<text x="${pointX(index).toFixed(1)}" y="${chartH - 8}" text-anchor="middle" class="trend-axis-text">${renderer.esc(dayName)}</text>`;
   }).join('');
   const gridLines = [0.25, 0.5, 0.75, 1].map((fraction) => {
     const gy = (padTop + innerH - innerH * fraction).toFixed(1);
@@ -690,11 +690,11 @@ function renderDashboard(summary) {
   }).join('');
   const trendPoints = chartRows.map((row, index) => {
     const [gy, gm, gd] = row.date.split('-').map(Number);
-    const jalaliDate = toPersianDigits(gregorianToJalali(gy, gm, gd).join('/'));
+    const jalaliDate = toPersianDigits(renderer.gregorianToJalali(gy, gm, gd).join('/'));
     const dayName = weekdayNames[(new Date(`${row.date}T00:00:00Z`).getUTCDay() + 1) % 7];
-    return `<g class="trend-point"><title>${esc(`${dayName} ${jalaliDate} — فروش ${money(row.sales)} · سود ${money(row.profit)}`)}</title><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.sales).toFixed(1)}" r="3.4" class="trend-dot-sales"/><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.profit).toFixed(1)}" r="2.6" class="trend-dot-profit"/></g>`;
+    return `<g class="trend-point"><title>${renderer.esc(`${dayName} ${jalaliDate} — فروش ${money(row.sales)} · سود ${money(row.profit)}`)}</title><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.sales).toFixed(1)}" r="3.4" class="trend-dot-sales"/><circle cx="${pointX(index).toFixed(1)}" cy="${pointY(row.profit).toFixed(1)}" r="2.6" class="trend-dot-profit"/></g>`;
   }).join('');
-  $('#dashboardSalesChart').innerHTML = `<svg class="trend-chart" viewBox="0 0 ${chartW} ${chartH}" aria-hidden="true">${gridLines}<path d="${areaPath}" class="trend-area"/><path d="${linePath(sparkValues)}" class="trend-sales"/><path d="${linePath(profitValues)}" class="trend-profit"/><text x="${padX - 6}" y="${(padTop + 4).toFixed(1)}" text-anchor="end" class="trend-axis-text">${esc(compactMoney(maxVal))}</text>${dayLabels}${trendPoints}</svg><div class="chart-legend"><span><i class="legend-sales"></i>فروش</span><span><i class="legend-profit"></i>سود</span></div>`;
+  $('#dashboardSalesChart').innerHTML = `<svg class="trend-chart" viewBox="0 0 ${chartW} ${chartH}" aria-hidden="true">${gridLines}<path d="${areaPath}" class="trend-area"/><path d="${linePath(sparkValues)}" class="trend-sales"/><path d="${linePath(profitValues)}" class="trend-profit"/><text x="${padX - 6}" y="${(padTop + 4).toFixed(1)}" text-anchor="end" class="trend-axis-text">${renderer.esc(compactMoney(maxVal))}</text>${dayLabels}${trendPoints}</svg><div class="chart-legend"><span><i class="legend-sales"></i>فروش</span><span><i class="legend-profit"></i>سود</span></div>`;
   const paymentLabels = { cash: 'نقدی', card: 'کارت', check: 'چک', credit: 'اعتباری' };
   const donutPalette = ['var(--accent)', '#a78bfa', '#f59e0b', '#34d399', '#f87171'];
   const payments = summary.paymentBreakdown || [];
@@ -706,26 +706,26 @@ function renderDashboard(summary) {
       const fraction = Number(row.amount || 0) / paymentTotal;
       const dash = fraction * circumference;
       const color = donutPalette[index % donutPalette.length];
-      const segment = `<circle cx="70" cy="70" r="${radius}" fill="none" stroke="${color}" stroke-width="15" stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}" stroke-dashoffset="${(-dashOffset).toFixed(2)}" transform="rotate(-90 70 70)"><title>${esc(`${paymentLabels[row.method] || row.method}: ${money(row.amount)}`)}</title></circle>`;
+      const segment = `<circle cx="70" cy="70" r="${radius}" fill="none" stroke="${color}" stroke-width="15" stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}" stroke-dashoffset="${(-dashOffset).toFixed(2)}" transform="rotate(-90 70 70)"><title>${renderer.esc(`${paymentLabels[row.method] || row.method}: ${money(row.amount)}`)}</title></circle>`;
       dashOffset += dash;
       return segment;
     }).join('');
-    const legend = payments.map((row, index) => `<div class="donut-legend-row"><i style="background:${donutPalette[index % donutPalette.length]}"></i><span>${paymentLabels[row.method] || esc(row.method)}</span><b>${money(row.amount)}</b><small>${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(Number(row.amount || 0) / paymentTotal * 100)}٪</small></div>`).join('');
-    $('#dashboardPaymentsChart').innerHTML = `<div class="donut-wrap"><svg class="donut" viewBox="0 0 140 140" role="img">${segments}<text x="70" y="66" text-anchor="middle" class="donut-total">${esc(compactMoney(paymentTotal))}</text><text x="70" y="84" text-anchor="middle" class="donut-caption">دریافت ماه</text></svg><div class="donut-legend">${legend}</div></div>`;
+    const legend = payments.map((row, index) => `<div class="donut-legend-row"><i style="background:${donutPalette[index % donutPalette.length]}"></i><span>${paymentLabels[row.method] || renderer.esc(row.method)}</span><b>${money(row.amount)}</b><small>${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 }).format(Number(row.amount || 0) / paymentTotal * 100)}٪</small></div>`).join('');
+    $('#dashboardPaymentsChart').innerHTML = `<div class="donut-wrap"><svg class="donut" viewBox="0 0 140 140" role="img">${segments}<text x="70" y="66" text-anchor="middle" class="donut-total">${renderer.esc(compactMoney(paymentTotal))}</text><text x="70" y="84" text-anchor="middle" class="donut-caption">دریافت ماه</text></svg><div class="donut-legend">${legend}</div></div>`;
   } else {
     $('#dashboardPaymentsChart').innerHTML = '<div class="empty-state compact">پرداختی برای این ماه ثبت نشده است.</div>';
   }
   const categoryRows = summary.categorySales || [];
   const categoryMax = Math.max(1, ...categoryRows.map((row) => Number(row.netSales || 0)));
-  $('#dashboardCategoryChart').innerHTML = categoryRows.length ? categoryRows.map((row) => `<div class="dashboard-bar-row"><span>${esc(row.categoryName)}</span><div><i style="width:${Number(row.netSales || 0) / categoryMax * 100}%"></i></div><b>${money(row.netSales)}</b></div>`).join('') : '<div class="empty-state compact">فروشی برای دسته‌بندی‌ها ثبت نشده است.</div>';
+  $('#dashboardCategoryChart').innerHTML = categoryRows.length ? categoryRows.map((row) => `<div class="dashboard-bar-row"><span>${renderer.esc(row.categoryName)}</span><div><i style="width:${Number(row.netSales || 0) / categoryMax * 100}%"></i></div><b>${money(row.netSales)}</b></div>`).join('') : '<div class="empty-state compact">فروشی برای دسته‌بندی‌ها ثبت نشده است.</div>';
   const cashRows = [{ label: 'دریافت', amount: Number(summary.cashMonth?.income || 0) }, { label: 'هزینه', amount: Number(summary.cashMonth?.expense || 0) }];
   const cashMax = Math.max(1, ...cashRows.map((row) => row.amount));
   $('#dashboardCashChart').innerHTML = cashRows.map((row) => `<div class="dashboard-bar-row"><span>${row.label}</span><div><i style="width:${row.amount / cashMax * 100}%;background:${row.label === 'هزینه' ? '#f87171' : ''}"></i></div><b>${money(row.amount)}</b></div>`).join('');
-  $('#dashboardRecentSales').innerHTML = (summary.recentSales || []).length ? summary.recentSales.map((row) => `<button class="dashboard-list-row" data-page="sales-invoices"><span><strong>${esc(row.invoiceNumber)}</strong><small>${row.source === 'daily' ? '<span class="daily-sale-party">فروش روزانه</span>' : esc(row.partyName || 'بدون طرف‌حساب')} · ${isoToJalali(row.date)}</small></span><b>${money(row.total)}</b></button>`).join('') : '<div class="empty-state compact">فروشی ثبت نشده است.</div>';
-  $('#dashboardDebtors').innerHTML = (summary.topDebtors || []).length ? summary.topDebtors.map((row) => `<button class="dashboard-list-row" data-page="ledger"><span><strong>${esc(row.partyName)}</strong><small>مانده بدهی</small></span><b class="debt-amount">${money(row.balance)}</b></button>`).join('') : '<div class="empty-state compact">بدهی ثبت‌شده‌ای وجود ندارد.</div>';
+  $('#dashboardRecentSales').innerHTML = (summary.recentSales || []).length ? summary.recentSales.map((row) => `<button class="dashboard-list-row" data-page="sales-invoices"><span><strong>${renderer.esc(row.invoiceNumber)}</strong><small>${row.source === 'daily' ? '<span class="daily-sale-party">فروش روزانه</span>' : renderer.esc(row.partyName || 'بدون طرف‌حساب')} · ${renderer.isoToJalali(row.date)}</small></span><b>${money(row.total)}</b></button>`).join('') : '<div class="empty-state compact">فروشی ثبت نشده است.</div>';
+  $('#dashboardDebtors').innerHTML = (summary.topDebtors || []).length ? summary.topDebtors.map((row) => `<button class="dashboard-list-row" data-page="ledger"><span><strong>${renderer.esc(row.partyName)}</strong><small>مانده بدهی</small></span><b class="debt-amount">${money(row.balance)}</b></button>`).join('') : '<div class="empty-state compact">بدهی ثبت‌شده‌ای وجود ندارد.</div>';
   const dashboardTopProducts = [...(summary.topProducts || [])].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
-  $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
-  document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => setManagedPage(node.dataset.page); });
+  $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${renderer.esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
+  document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => renderer.setManagedPage(node.dataset.page); });
   // These chart panels hit guarded channels; before login they are re-run by
   // refreshAfterLogin, so skip the boot copy instead of logging a rejection.
   if (sessionReady) {
@@ -737,7 +737,7 @@ function renderDashboard(summary) {
 function renderResults() {
   const box = $('#productResults');
   if (!state.products.length) { box.classList.add('hidden'); return; }
-  box.innerHTML = state.products.map((product) => `<button class="result-item" data-id="${product.id}"><span>${esc(product.name)}<small>${esc(product.code)} · موجودی ${product.stock}</small></span><b>${money(product.salePrice)}</b></button>`).join('');
+  box.innerHTML = state.products.map((product) => `<button class="result-item" data-id="${product.id}"><span>${renderer.esc(product.name)}<small>${renderer.esc(product.code)} · موجودی ${product.stock}</small></span><b>${money(product.salePrice)}</b></button>`).join('');
   box.classList.remove('hidden');
   box.querySelectorAll('.result-item').forEach((button) => button.addEventListener('click', () => addProduct(Number(button.dataset.id))));
 }
@@ -745,17 +745,17 @@ function renderResults() {
 function renderItems() {
   const body = $('#saleItems');
   if (!state.items.length) { body.innerHTML = '<tr class="empty-row"><td colspan="6">برای شروع، کالا را جستجو و انتخاب کنید.</td></tr>'; return; }
-  body.innerHTML = state.items.map((item, index) => `<tr><td><strong>${esc(item.name)}</strong><small>${esc(item.code)} · موجودی ${item.stock}</small></td><td><input class="line-quantity" data-index="${index}" type="number" min="0.01" step="0.01" value="${item.quantity}" /></td><td>${money(item.unitPrice)}</td><td><input class="line-discount" data-index="${index}" type="number" min="0" value="${formatPriceInput(item.discount)}" /></td><td>${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-index="${index}" title="حذف">×</button></td></tr>`).join('');
-  body.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => { const item = state.items[Number(input.dataset.index)]; if (input.classList.contains('line-quantity')) item.quantity = number(input.value); else item.discount = parsePriceInput(input.value); updateSummary(); }));
+  body.innerHTML = state.items.map((item, index) => `<tr><td><strong>${renderer.esc(item.name)}</strong><small>${renderer.esc(item.code)} · موجودی ${item.stock}</small></td><td><input class="line-quantity" data-index="${index}" type="number" min="0.01" step="0.01" value="${item.quantity}" /></td><td>${money(item.unitPrice)}</td><td><input class="line-discount" data-index="${index}" type="number" min="0" value="${renderer.formatPriceInput(item.discount)}" /></td><td>${money(Math.max(0, item.quantity * item.unitPrice - item.discount))}</td><td><button class="delete-line" data-index="${index}" title="حذف">×</button></td></tr>`).join('');
+  body.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => { const item = state.items[Number(input.dataset.index)]; if (input.classList.contains('line-quantity')) item.quantity = number(input.value); else item.discount = renderer.parsePriceInput(input.value); updateSummary(); }));
   body.querySelectorAll('.delete-line').forEach((button) => button.addEventListener('click', () => { state.items.splice(Number(button.dataset.index), 1); renderItems(); updateSummary(); }));
 }
 
 function updateSummary() {
   const subtotal = state.items.reduce((sum, item) => sum + Math.max(0, item.quantity * item.unitPrice - item.discount), 0);
-  const discount = parsePriceInput($('#discount').value);
-  const tax = parsePriceInput($('#tax').value);
+  const discount = renderer.parsePriceInput($('#discount').value);
+  const tax = renderer.parsePriceInput($('#tax').value);
   const total = Math.max(0, subtotal - discount + tax);
-  const paid = Math.min(total, parsePriceInput($('#paidAmount').value));
+  const paid = Math.min(total, renderer.parsePriceInput($('#paidAmount').value));
   $('#subtotal').textContent = money(subtotal);
   $('#total').textContent = money(total);
   $('#remaining').textContent = money(total - paid);
@@ -783,13 +783,13 @@ async function saveSale(print = false) {
   try {
     const result = await window.api.sales.create({
       items: state.items.map(({ productId, quantity, unitPrice, discount }) => ({ productId, quantity, unitPrice: unitPrice / 100, discount: discount / 100 })),
-      discount: parsePriceInput($('#discount').value) / 100,
-      tax: parsePriceInput($('#tax').value) / 100,
-      paidAmount: parsePriceInput($('#paidAmount').value) / 100,
+      discount: renderer.parsePriceInput($('#discount').value) / 100,
+      tax: renderer.parsePriceInput($('#tax').value) / 100,
+      paidAmount: renderer.parsePriceInput($('#paidAmount').value) / 100,
       date: $('#saleDate').value
     });
     showToast(`فروش ${result.invoiceNumber} با موفقیت ثبت شد.`);
-    if (print) await openInvoicePrintPreview('sale', result.id);
+    if (print) await renderer.openInvoicePrintPreview('sale', result.id);
     state.items = []; renderItems(); ['discount', 'tax', 'paidAmount'].forEach((id) => { $(`#${id}`).value = '0'; }); updateSummary();
     renderMetrics(await window.api.dashboard.summary());
   } catch (err) {
@@ -822,11 +822,11 @@ function authOverlayVisible() {
 document.addEventListener('keydown', (event) => {
   if (!uiShortcuts) return;
   if (authOverlayVisible()) return;
-  if (event.key === 'F2') { event.preventDefault(); setManagedPage('sales'); $('#saleProductFilter')?.focus(); }
+  if (event.key === 'F2') { event.preventDefault(); renderer.setManagedPage('sales'); $('#saleProductFilter')?.focus(); }
   if (event.key === 'F9') {
     event.preventDefault();
     if ($('#salesPage')?.classList.contains('hidden')) {
-      setManagedPage('sales');
+      renderer.setManagedPage('sales');
       setTimeout(() => $('#saleProductFilter')?.focus(), 0);
     } else {
       $('#modernSaveSale')?.click() || saveSale();
@@ -834,8 +834,8 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.ctrlKey && event.key === 'Enter') {
     event.preventDefault();
-    if (!$('#salesInvoicePage')?.classList.contains('hidden')) saveKeyboardInvoice('sale');
-    else if (!$('#purchasesPage')?.classList.contains('hidden')) saveKeyboardInvoice('purchase');
+    if (!$('#salesInvoicePage')?.classList.contains('hidden')) renderer.saveKeyboardInvoice('sale');
+    else if (!$('#purchasesPage')?.classList.contains('hidden')) renderer.saveKeyboardInvoice('purchase');
   }
 });
 $('#version').textContent = window.appInfo?.version || '۱.۰.۰';
@@ -848,7 +848,7 @@ renderDashboardSkeleton();
 if (sessionReady) window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
 setPage('dashboard');
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   constants: { state, $, dailySaleDraftStorageKey, currencyIsRial, currencyFactor, currencyLabel, formatCurrencyNumber, money, normalizeDigits, normalizeSearchText, svgIcon, NAV_ICONS, number },
   mutable: {
     sessionReady: { get: () => sessionReady, set: (value) => { sessionReady = value; } },

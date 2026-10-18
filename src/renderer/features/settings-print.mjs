@@ -1,10 +1,10 @@
-import { publishRendererBindings } from '../shared/bridge.mjs';
+import { renderer, registerRendererBindings } from '../shared/runtime.mjs';
 let refreshSettingsData = () => Promise.resolve();
 
 /* Extended settings workspace: replaces the initial two-card screen with
    tabbed, persisted configuration while keeping backward-compatible APIs. */
 function initializeSettingsPageV2() {
-  const root = $('#settingsPage');
+  const root = renderer.$('#settingsPage');
   if (!root || root.dataset.v2) return;
   root.dataset.v2 = '1';
   root.innerHTML = `
@@ -22,81 +22,81 @@ function initializeSettingsPageV2() {
       <section class="settings-panel" data-settings-panel="appearance"><form id="v2Appearance" class="panel settings-card"><h3>\u0638\u0627\u0647\u0631 \u0648 \u0631\u0641\u062a\u0627\u0631</h3><div class="form-grid"><label>\u067e\u0648\u0633\u062a\u0647<select id="v2Theme"><option value="dark">\u062a\u0627\u0631\u06cc\u06a9</option><option value="light">\u0631\u0648\u0634\u0646</option><option value="system">\u0633\u06cc\u0633\u062a\u0645</option><option value="hacker">\u0647\u06a9\u0631\u06cc</option></select></label><label>\u062a\u0642\u0648\u06cc\u0645<select id="v2Calendar"><option value="gregorian">\u0645\u06cc\u0644\u0627\u062f\u06cc</option><option value="jalali">\u0634\u0645\u0633\u06cc</option></select></label><label>\u0641\u0648\u0646\u062a (%)<input id="v2Font" type="number" min="80" max="130"></label></div><div class="settings-checks"><label class="settings-check"><input id="v2Notify" type="checkbox">\u0627\u0639\u0644\u0627\u0646\u200c\u0647\u0627</label><label class="settings-check"><input id="v2Shortcuts" type="checkbox">\u0645\u06cc\u0627\u0646\u0628\u0631\u0647\u0627</label><label class="settings-check"><input id="v2Passwordless" type="checkbox">\u0648\u0631\u0648\u062f \u0628\u062f\u0648\u0646 \u0631\u0645\u0632 \u0641\u0642\u0637 \u0628\u0627 \u0646\u0627\u0645 \u06a9\u0627\u0631\u0628\u0631\u06cc</label><label class="settings-check"><input id="v2Startup" type="checkbox">\u0627\u062c\u0631\u0627\u06cc \u062e\u0648\u062f\u06a9\u0627\u0631 \u0647\u0645\u0631\u0627\u0647 \u0628\u0627 \u0634\u0631\u0648\u0639 \u0648\u06cc\u0646\u062f\u0648\u0632</label></div><button class="primary" type="submit">\u0630\u062e\u06cc\u0631\u0647</button></form></section>
       <section class="settings-panel" data-settings-panel="backup"><form id="v2Backup" class="panel settings-card"><h3>\u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc \u0648 \u062f\u0627\u062f\u0647</h3><label>\u0645\u0633\u06cc\u0631 \u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc<div class="input-with-action"><input id="v2BackupPath" readonly><button id="v2ChooseBackup" type="button">...</button></div></label><label>\u062f\u0648\u0631\u0647<select id="v2BackupFrequency"><option value="daily">\u0631\u0648\u0632\u0627\u0646\u0647</option><option value="weekly">\u0647\u0641\u062a\u06af\u06cc</option></select></label><label class="settings-check"><input id="v2BackupAuto" type="checkbox">\u062e\u0648\u062f\u06a9\u0627\u0631</label><div class="modal-actions"><button id="v2BackupNow" type="button" class="secondary">\u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc \u0647\u0645\u06cc\u0646 \u0627\u0644\u0627\u0646</button><button class="primary" type="submit">\u0630\u062e\u06cc\u0631\u0647</button></div></form></section>
     </div></div>`;
-  const printForm = $('#v2Print');
-  const paperField = $('#v2Paper')?.closest('label');
-  if (printForm && !$('#v2Orientation')) {
+  const printForm = renderer.$('#v2Print');
+  const paperField = renderer.$('#v2Paper')?.closest('label');
+  if (printForm && !renderer.$('#v2Orientation')) {
     paperField?.insertAdjacentHTML('afterend', '<label>جهت صفحه<select id="v2Orientation"><option value="portrait">عمودی</option><option value="landscape">افقی</option></select></label>');
-    $('#v2ShowInfo')?.closest('label')?.insertAdjacentHTML('afterend', '<label class="settings-check"><input id="v2ShowUnit" type="checkbox">نمایش واحد</label>');
+    renderer.$('#v2ShowInfo')?.closest('label')?.insertAdjacentHTML('afterend', '<label class="settings-check"><input id="v2ShowUnit" type="checkbox">نمایش واحد</label>');
   }
-  if (printForm && !$('#v2ShowPrintDialog')) {
+  if (printForm && !renderer.$('#v2ShowPrintDialog')) {
     const printChecks = printForm.querySelector('.settings-checks');
     printChecks?.insertAdjacentHTML('beforeend', '<label class="settings-check"><input id="v2ShowPrintDialog" type="checkbox">نمایش پنجره چاپ ویندوز</label>');
   }
   let settings = {};
-  const val = (id, value) => { const n = $(`#${id}`); if (n) n.value = value ?? ''; };
-  const chk = (id, value) => { const n = $(`#${id}`); if (n) n.checked = Boolean(value); };
-  const renderUnits = () => { const units = managementState.units || []; $('#v2UnitsTable').innerHTML = units.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.symbol || '—')}</td><td>${u.decimals || 0}</td><td>${u.allowFraction ? '✓' : '—'}</td><td><button class="table-action v2-edit-unit" data-id="${u.id}">\u0648\u06cc\u0631\u0627\u06cc\u0634</button></td></tr>`).join(''); $('#v2DefaultUnit').innerHTML = '<option value="">\u0628\u062f\u0648\u0646 \u0648\u0627\u062d\u062f</option>' + units.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join(''); };
-  const loadPrinters = async (selected) => { try { const list = await window.api.settings.printers(); $('#v2Printer').innerHTML = '<option value="">\u067e\u06cc\u0634\u200c\u0641\u0631\u0636 \u0633\u06cc\u0633\u062a\u0645</option>' + list.map((p) => `<option value="${esc(p.name)}">${esc(p.displayName)}</option>`).join(''); $('#v2Printer').value = selected || ''; } catch {} };
-  const load = async () => { settings = await window.api.settings.get(); if (settings.currency) uiCurrency = { ...uiCurrency, ...settings.currency }; const s = settings.store || {}, p = settings.print || {}, c = settings.currency || {}, sl = settings.sales || {}, pr = settings.product || {}, f = settings.financial || {}, a = settings.appearance || {}, b = settings.backup || {}, sec = settings.security || {}; [['v2Name',s.name],['v2Slogan',s.slogan],['v2Phone',s.phone],['v2Postal',s.postalCode],['v2Address',s.address],['v2Website',s.website],['v2Instagram',s.instagram],['v2Rubika',s.rubika],['v2Footer',s.footer],['v2Logo',s.logoPath],['v2Paper',p.paperSize],['v2Copies',p.copies],['v2Margin',p.margin],['v2CurCode',c.code],['v2CurName',c.name],['v2CurSymbol',c.symbol],['v2CurPosition',c.position],['v2CurDecimals',c.decimals],['v2CurInput',c.inputUnit],['v2CurRound',c.rounding],['v2PriceType',sl.defaultPriceType],['v2SaleTax',sl.defaultTax],['v2InvoicePrefix',sl.invoicePrefix],['v2Payment',sl.paymentMethod],['v2ProductPrefix',pr.codePrefix],['v2MinStock',pr.defaultMinimumStock],['v2DefaultUnit',pr.defaultUnitId],['v2TaxRate',f.taxRate],['v2MaxDiscount',f.maxDiscount],['v2FinRound',f.rounding],['v2Theme',a.theme],['v2Calendar',a.calendar],['v2Font',a.fontScale],['v2BackupPath',b.path],['v2BackupFrequency',b.frequency]].forEach(([id,v]) => val(id,v)); [['v2Color',p.color],['v2ShowLogo',p.showLogo],['v2ShowInfo',p.showStoreInfo],['v2ShowDiscount',p.showDiscount],['v2ShowTax',p.showTax],['v2Preview',p.previewBeforePrint],['v2ShowPrintDialog',p.showPrintDialog],['v2AutoSale',p.autoPrintSale],['v2AutoPurchase',p.autoPrintPurchase],['v2CurSep',c.separator],['v2Oversell',sl.preventOversell],['v2AutoDate',sl.autoDate],['v2RequireBarcode',pr.requireBarcode],['v2Negative',pr.allowNegativeStock],['v2LowStock',pr.warnLowStock],['v2Fractional',pr.allowFractional],['v2TaxEnabled',f.taxEnabled],['v2TaxAfter',f.taxAfterDiscount],['v2Notify',a.notifications],['v2Shortcuts',a.shortcuts],['v2Passwordless',sec.passwordlessLogin],['v2Startup',a.startup],['v2BackupAuto',b.auto]].forEach(([id,v]) => chk(id,v)); managementState.units = await window.api.units.list(); renderUnits(); loadPrinters(p.printerName); $('#v2LogoLabel').textContent = s.logoPath || '\u0644\u0648\u06af\u0648\u06cc\u06cc \u0627\u0646\u062a\u062e\u0627\u0628 \u0646\u0634\u062f\u0647'; };
-  const collect = () => ({ ...settings, store: { name: $('#v2Name').value, slogan: $('#v2Slogan').value, phone: $('#v2Phone').value, postalCode: $('#v2Postal').value, address: $('#v2Address').value, website: $('#v2Website').value, instagram: $('#v2Instagram').value, rubika: $('#v2Rubika').value, footer: $('#v2Footer').value, logoPath: $('#v2Logo').value }, print: { printerName: $('#v2Printer').value, paperSize: $('#v2Paper').value, copies: Number($('#v2Copies').value || 1), margin: $('#v2Margin').value, color: $('#v2Color').checked, showLogo: $('#v2ShowLogo').checked, showStoreInfo: $('#v2ShowInfo').checked, showDiscount: $('#v2ShowDiscount').checked, showTax: $('#v2ShowTax').checked, previewBeforePrint: $('#v2Preview').checked, showPrintDialog: $('#v2ShowPrintDialog').checked, autoPrintSale: $('#v2AutoSale').checked, autoPrintPurchase: $('#v2AutoPurchase').checked }, currency: { code: $('#v2CurCode').value, name: $('#v2CurName').value, symbol: $('#v2CurSymbol').value, position: $('#v2CurPosition').value, decimals: Number($('#v2CurDecimals').value || 0), separator: $('#v2CurSep').checked, rounding: $('#v2CurRound').value, inputUnit: $('#v2CurInput').value }, sales: { defaultPriceType: $('#v2PriceType').value, defaultTax: Number($('#v2SaleTax').value || 0), preventOversell: $('#v2Oversell').checked, invoicePrefix: $('#v2InvoicePrefix').value, paymentMethod: $('#v2Payment').value, autoDate: $('#v2AutoDate').checked }, product: { codePrefix: $('#v2ProductPrefix').value, defaultMinimumStock: Number($('#v2MinStock').value || 0), defaultUnitId: $('#v2DefaultUnit').value, requireBarcode: $('#v2RequireBarcode').checked, allowNegativeStock: $('#v2Negative').checked, warnLowStock: $('#v2LowStock').checked, allowFractional: $('#v2Fractional').checked }, financial: { taxRate: Number($('#v2TaxRate').value || 0), maxDiscount: Number($('#v2MaxDiscount').value || 0), rounding: $('#v2FinRound').value, taxEnabled: $('#v2TaxEnabled').checked, taxAfterDiscount: $('#v2TaxAfter').checked }, appearance: { theme: $('#v2Theme').value, calendar: $('#v2Calendar').value, fontScale: Number($('#v2Font').value || 100), notifications: $('#v2Notify').checked, shortcuts: $('#v2Shortcuts').checked, startup: $('#v2Startup').checked }, security: { passwordlessLogin: $('#v2Passwordless').checked }, backup: { path: $('#v2BackupPath').value, frequency: $('#v2BackupFrequency').value, auto: $('#v2BackupAuto').checked } });
+  const val = (id, value) => { const n = renderer.$(`#${id}`); if (n) n.value = value ?? ''; };
+  const chk = (id, value) => { const n = renderer.$(`#${id}`); if (n) n.checked = Boolean(value); };
+  const renderUnits = () => { const units = renderer.managementState.units || []; renderer.$('#v2UnitsTable').innerHTML = units.map((u) => `<tr><td>${renderer.esc(u.name)}</td><td>${renderer.esc(u.symbol || '—')}</td><td>${u.decimals || 0}</td><td>${u.allowFraction ? '✓' : '—'}</td><td><button class="table-action v2-edit-unit" data-id="${u.id}">\u0648\u06cc\u0631\u0627\u06cc\u0634</button></td></tr>`).join(''); renderer.$('#v2DefaultUnit').innerHTML = '<option value="">\u0628\u062f\u0648\u0646 \u0648\u0627\u062d\u062f</option>' + units.map((u) => `<option value="${u.id}">${renderer.esc(u.name)}</option>`).join(''); };
+  const loadPrinters = async (selected) => { try { const list = await window.api.settings.printers(); renderer.$('#v2Printer').innerHTML = '<option value="">\u067e\u06cc\u0634\u200c\u0641\u0631\u0636 \u0633\u06cc\u0633\u062a\u0645</option>' + list.map((p) => `<option value="${renderer.esc(p.name)}">${renderer.esc(p.displayName)}</option>`).join(''); renderer.$('#v2Printer').value = selected || ''; } catch {} };
+  const load = async () => { settings = await window.api.settings.get(); if (settings.currency) renderer.uiCurrency = { ...uiCurrency, ...settings.currency }; const s = settings.store || {}, p = settings.print || {}, c = settings.currency || {}, sl = settings.sales || {}, pr = settings.product || {}, f = settings.financial || {}, a = settings.appearance || {}, b = settings.backup || {}, sec = settings.security || {}; [['v2Name',s.name],['v2Slogan',s.slogan],['v2Phone',s.phone],['v2Postal',s.postalCode],['v2Address',s.address],['v2Website',s.website],['v2Instagram',s.instagram],['v2Rubika',s.rubika],['v2Footer',s.footer],['v2Logo',s.logoPath],['v2Paper',p.paperSize],['v2Copies',p.copies],['v2Margin',p.margin],['v2CurCode',c.code],['v2CurName',c.name],['v2CurSymbol',c.symbol],['v2CurPosition',c.position],['v2CurDecimals',c.decimals],['v2CurInput',c.inputUnit],['v2CurRound',c.rounding],['v2PriceType',sl.defaultPriceType],['v2SaleTax',sl.defaultTax],['v2InvoicePrefix',sl.invoicePrefix],['v2Payment',sl.paymentMethod],['v2ProductPrefix',pr.codePrefix],['v2MinStock',pr.defaultMinimumStock],['v2DefaultUnit',pr.defaultUnitId],['v2TaxRate',f.taxRate],['v2MaxDiscount',f.maxDiscount],['v2FinRound',f.rounding],['v2Theme',a.theme],['v2Calendar',a.calendar],['v2Font',a.fontScale],['v2BackupPath',b.path],['v2BackupFrequency',b.frequency]].forEach(([id,v]) => val(id,v)); [['v2Color',p.color],['v2ShowLogo',p.showLogo],['v2ShowInfo',p.showStoreInfo],['v2ShowDiscount',p.showDiscount],['v2ShowTax',p.showTax],['v2Preview',p.previewBeforePrint],['v2ShowPrintDialog',p.showPrintDialog],['v2AutoSale',p.autoPrintSale],['v2AutoPurchase',p.autoPrintPurchase],['v2CurSep',c.separator],['v2Oversell',sl.preventOversell],['v2AutoDate',sl.autoDate],['v2RequireBarcode',pr.requireBarcode],['v2Negative',pr.allowNegativeStock],['v2LowStock',pr.warnLowStock],['v2Fractional',pr.allowFractional],['v2TaxEnabled',f.taxEnabled],['v2TaxAfter',f.taxAfterDiscount],['v2Notify',a.notifications],['v2Shortcuts',a.shortcuts],['v2Passwordless',sec.passwordlessLogin],['v2Startup',a.startup],['v2BackupAuto',b.auto]].forEach(([id,v]) => chk(id,v)); renderer.managementState.units = await window.api.units.list(); renderUnits(); loadPrinters(p.printerName); renderer.$('#v2LogoLabel').textContent = s.logoPath || '\u0644\u0648\u06af\u0648\u06cc\u06cc \u0627\u0646\u062a\u062e\u0627\u0628 \u0646\u0634\u062f\u0647'; };
+  const collect = () => ({ ...settings, store: { name: renderer.$('#v2Name').value, slogan: renderer.$('#v2Slogan').value, phone: renderer.$('#v2Phone').value, postalCode: renderer.$('#v2Postal').value, address: renderer.$('#v2Address').value, website: renderer.$('#v2Website').value, instagram: renderer.$('#v2Instagram').value, rubika: renderer.$('#v2Rubika').value, footer: renderer.$('#v2Footer').value, logoPath: renderer.$('#v2Logo').value }, print: { printerName: renderer.$('#v2Printer').value, paperSize: renderer.$('#v2Paper').value, copies: Number(renderer.$('#v2Copies').value || 1), margin: renderer.$('#v2Margin').value, color: renderer.$('#v2Color').checked, showLogo: renderer.$('#v2ShowLogo').checked, showStoreInfo: renderer.$('#v2ShowInfo').checked, showDiscount: renderer.$('#v2ShowDiscount').checked, showTax: renderer.$('#v2ShowTax').checked, previewBeforePrint: renderer.$('#v2Preview').checked, showPrintDialog: renderer.$('#v2ShowPrintDialog').checked, autoPrintSale: renderer.$('#v2AutoSale').checked, autoPrintPurchase: renderer.$('#v2AutoPurchase').checked }, currency: { code: renderer.$('#v2CurCode').value, name: renderer.$('#v2CurName').value, symbol: renderer.$('#v2CurSymbol').value, position: renderer.$('#v2CurPosition').value, decimals: Number(renderer.$('#v2CurDecimals').value || 0), separator: renderer.$('#v2CurSep').checked, rounding: renderer.$('#v2CurRound').value, inputUnit: renderer.$('#v2CurInput').value }, sales: { defaultPriceType: renderer.$('#v2PriceType').value, defaultTax: Number(renderer.$('#v2SaleTax').value || 0), preventOversell: renderer.$('#v2Oversell').checked, invoicePrefix: renderer.$('#v2InvoicePrefix').value, paymentMethod: renderer.$('#v2Payment').value, autoDate: renderer.$('#v2AutoDate').checked }, product: { codePrefix: renderer.$('#v2ProductPrefix').value, defaultMinimumStock: Number(renderer.$('#v2MinStock').value || 0), defaultUnitId: renderer.$('#v2DefaultUnit').value, requireBarcode: renderer.$('#v2RequireBarcode').checked, allowNegativeStock: renderer.$('#v2Negative').checked, warnLowStock: renderer.$('#v2LowStock').checked, allowFractional: renderer.$('#v2Fractional').checked }, financial: { taxRate: Number(renderer.$('#v2TaxRate').value || 0), maxDiscount: Number(renderer.$('#v2MaxDiscount').value || 0), rounding: renderer.$('#v2FinRound').value, taxEnabled: renderer.$('#v2TaxEnabled').checked, taxAfterDiscount: renderer.$('#v2TaxAfter').checked }, appearance: { theme: renderer.$('#v2Theme').value, calendar: renderer.$('#v2Calendar').value, fontScale: Number(renderer.$('#v2Font').value || 100), notifications: renderer.$('#v2Notify').checked, shortcuts: renderer.$('#v2Shortcuts').checked, startup: renderer.$('#v2Startup').checked }, security: { passwordlessLogin: renderer.$('#v2Passwordless').checked }, backup: { path: renderer.$('#v2BackupPath').value, frequency: renderer.$('#v2BackupFrequency').value, auto: renderer.$('#v2BackupAuto').checked } });
   const save = async () => {
     const payload = collect();
-    payload.print.orientation = $('#v2Orientation')?.value || 'portrait';
-    payload.print.showUnit = $('#v2ShowUnit')?.checked !== false;
+    payload.print.orientation = renderer.$('#v2Orientation')?.value || 'portrait';
+    payload.print.showUnit = renderer.$('#v2ShowUnit')?.checked !== false;
     settings = await window.api.settings.save(payload);
     const appearance = settings.appearance || {};
-    applyAppearanceSettings(appearance);
+    renderer.applyAppearanceSettings(appearance);
     if (settings.currency) {
-      uiCurrency = { ...uiCurrency, ...settings.currency };
-      await refreshCurrencyDisplays();
+      renderer.uiCurrency = { ...uiCurrency, ...settings.currency };
+      await renderer.refreshCurrencyDisplays();
     }
     const configuredMethod = settings.sales?.paymentMethod;
-    if (['cash', 'card', 'check'].includes(configuredMethod)) defaultSettlementMethod = configuredMethod;
-    showToast('\u062a\u0645\u0627\u0645 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.');
+    if (['cash', 'card', 'check'].includes(configuredMethod)) renderer.defaultSettlementMethod = configuredMethod;
+    renderer.showToast('\u062a\u0645\u0627\u0645 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.');
   };
-  document.querySelectorAll('.settings-tab').forEach((tab) => tab.addEventListener('click', () => { document.querySelectorAll('.settings-tab,.settings-panel').forEach((n) => n.classList.remove('active')); tab.classList.add('active'); $(`[data-settings-panel="${tab.dataset.settingsTab}"]`).classList.add('active'); }));
-  document.querySelectorAll('#settingsPage form').forEach((form) => form.addEventListener('submit', (e) => { e.preventDefault(); save().catch((err) => showToast(err.message, true)); }));
-  $('#saveAllSettings').addEventListener('click', () => save().catch((err) => showToast(err.message, true)));
-  $('#v2ChooseLogo').addEventListener('click', async () => { const r = await window.api.settings.chooseLogo(); if (!r.canceled) { $('#v2Logo').value = r.path; $('#v2LogoLabel').textContent = r.path; } });
-  $('#v2ChooseBackup').addEventListener('click', async () => { const r = await window.api.settings.chooseBackupPath(); if (!r.canceled) $('#v2BackupPath').value = r.path; });
-  $('#v2BackupNow').addEventListener('click', async () => { try { const r = await window.api.settings.backupNow($('#v2BackupPath').value); showToast(`\u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f: ${r.path}`); } catch (e) { showToast(e.message, true); } });
-  $('#v2Unit').addEventListener('submit', async (e) => { e.preventDefault(); try { const p = { name: $('#v2UnitName').value, symbol: $('#v2UnitSymbol').value, decimals: Number($('#v2UnitDecimals').value || 0), conversionFactor: Number($('#v2UnitFactor').value || 1), allowFraction: $('#v2UnitFraction').checked }; const id = $('#v2UnitId').value; if (id) await window.api.units.update(Number(id), p); else await window.api.units.create(p); $('#v2Unit').reset(); $('#v2UnitFactor').value = 1; $('#v2UnitId').value = ''; managementState.units = await window.api.units.list(); renderUnits(); showToast('\u0648\u0627\u062d\u062f \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.'); } catch (e) { showToast(e.message, true); } });
-  $('#v2UnitCancel').addEventListener('click', () => { $('#v2Unit').reset(); $('#v2UnitId').value = ''; $('#v2UnitFactor').value = 1; });
-  $('#settingsPage').addEventListener('click', (e) => { const b = e.target.closest('.v2-edit-unit'); if (!b) return; const u = managementState.units.find((x) => x.id === Number(b.dataset.id)); if (!u) return; $('#v2UnitId').value = u.id; $('#v2UnitName').value = u.name; $('#v2UnitSymbol').value = u.symbol || ''; $('#v2UnitDecimals').value = u.decimals || 0; $('#v2UnitFactor').value = u.conversionFactor || 1; $('#v2UnitFraction').checked = Boolean(u.allowFraction); });
+  document.querySelectorAll('.settings-tab').forEach((tab) => tab.addEventListener('click', () => { document.querySelectorAll('.settings-tab,.settings-panel').forEach((n) => n.classList.remove('active')); tab.classList.add('active'); renderer.$(`[data-settings-panel="${tab.dataset.settingsTab}"]`).classList.add('active'); }));
+  document.querySelectorAll('#settingsPage form').forEach((form) => form.addEventListener('submit', (e) => { e.preventDefault(); save().catch((err) => renderer.showToast(err.message, true)); }));
+  renderer.$('#saveAllSettings').addEventListener('click', () => save().catch((err) => renderer.showToast(err.message, true)));
+  renderer.$('#v2ChooseLogo').addEventListener('click', async () => { const r = await window.api.settings.chooseLogo(); if (!r.canceled) { renderer.$('#v2Logo').value = r.path; renderer.$('#v2LogoLabel').textContent = r.path; } });
+  renderer.$('#v2ChooseBackup').addEventListener('click', async () => { const r = await window.api.settings.chooseBackupPath(); if (!r.canceled) renderer.$('#v2BackupPath').value = r.path; });
+  renderer.$('#v2BackupNow').addEventListener('click', async () => { try { const r = await window.api.settings.backupNow(renderer.$('#v2BackupPath').value); renderer.showToast(`\u067e\u0634\u062a\u06cc\u0628\u0627\u0646\u06cc \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f: ${r.path}`); } catch (e) { renderer.showToast(e.message, true); } });
+  renderer.$('#v2Unit').addEventListener('submit', async (e) => { e.preventDefault(); try { const p = { name: renderer.$('#v2UnitName').value, symbol: renderer.$('#v2UnitSymbol').value, decimals: Number(renderer.$('#v2UnitDecimals').value || 0), conversionFactor: Number(renderer.$('#v2UnitFactor').value || 1), allowFraction: renderer.$('#v2UnitFraction').checked }; const id = renderer.$('#v2UnitId').value; if (id) await window.api.units.update(Number(id), p); else await window.api.units.create(p); renderer.$('#v2Unit').reset(); renderer.$('#v2UnitFactor').value = 1; renderer.$('#v2UnitId').value = ''; renderer.managementState.units = await window.api.units.list(); renderUnits(); renderer.showToast('\u0648\u0627\u062d\u062f \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f.'); } catch (e) { renderer.showToast(e.message, true); } });
+  renderer.$('#v2UnitCancel').addEventListener('click', () => { renderer.$('#v2Unit').reset(); renderer.$('#v2UnitId').value = ''; renderer.$('#v2UnitFactor').value = 1; });
+  renderer.$('#settingsPage').addEventListener('click', (e) => { const b = e.target.closest('.v2-edit-unit'); if (!b) return; const u = renderer.managementState.units.find((x) => x.id === Number(b.dataset.id)); if (!u) return; renderer.$('#v2UnitId').value = u.id; renderer.$('#v2UnitName').value = u.name; renderer.$('#v2UnitSymbol').value = u.symbol || ''; renderer.$('#v2UnitDecimals').value = u.decimals || 0; renderer.$('#v2UnitFactor').value = u.conversionFactor || 1; renderer.$('#v2UnitFraction').checked = Boolean(u.allowFraction); });
   // The units table and printer list come from guarded channels, so the boot
   // copy is rejected before login. refreshAfterLogin() re-runs this after a
   // session exists; skip it here rather than surfacing a login error as a toast.
   refreshSettingsData = () => load().then(() => {
-    $('#v2Orientation').value = settings.print?.orientation || 'portrait';
-    $('#v2ShowUnit').checked = settings.print?.showUnit !== false;
-  }).catch((e) => showToast(e.message, true));
-  if (sessionReady) refreshSettingsData();
+    renderer.$('#v2Orientation').value = settings.print?.orientation || 'portrait';
+    renderer.$('#v2ShowUnit').checked = settings.print?.showUnit !== false;
+  }).catch((e) => renderer.showToast(e.message, true));
+  if (renderer.sessionReady) refreshSettingsData();
 }
-initializeSettingsPage = initializeSettingsPageV2;
+renderer.initializeSettingsPage = initializeSettingsPageV2;
 initializeSettingsPageV2();
 
 function installQuickPinSettings() {
-  const checks = $('#v2Passwordless')?.closest('.settings-checks');
-  if (!checks || $('#setQuickPinButton')) return;
+  const checks = renderer.$('#v2Passwordless')?.closest('.settings-checks');
+  if (!checks || renderer.$('#setQuickPinButton')) return;
   checks.insertAdjacentHTML('afterend', '<div class="quick-pin-settings"><button id="setQuickPinButton" type="button" class="secondary">تنظیم یا تغییر PIN سریع</button><button id="clearQuickPinButton" type="button" class="secondary">حذف PIN سریع</button><small id="quickPinStatusText"></small></div>');
-  const refresh = async () => { try { const status = await window.api.auth.quickPin.status(); $('#quickPinStatusText').textContent = status.enabled ? 'PIN سریع فعال است.' : 'PIN سریع فعال نیست.'; } catch {} };
-  $('#setQuickPinButton').onclick = async () => { const pin = window.prompt('PIN چهار تا شش رقمی جدید را وارد کنید:'); if (pin == null) return; const password = window.prompt('برای تأیید، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.set(pin, password); showToast('PIN سریع تنظیم شد.'); refresh(); } catch (error) { showToast(readableError(error, 'تنظیم PIN ناموفق بود.'), true); } };
-  $('#clearQuickPinButton').onclick = async () => { const password = window.prompt('برای حذف PIN، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.clear(password); showToast('PIN سریع حذف شد.'); refresh(); } catch (error) { showToast(readableError(error, 'حذف PIN ناموفق بود.'), true); } };
+  const refresh = async () => { try { const status = await window.api.auth.quickPin.status(); renderer.$('#quickPinStatusText').textContent = status.enabled ? 'PIN سریع فعال است.' : 'PIN سریع فعال نیست.'; } catch {} };
+  renderer.$('#setQuickPinButton').onclick = async () => { const pin = window.prompt('PIN چهار تا شش رقمی جدید را وارد کنید:'); if (pin == null) return; const password = window.prompt('برای تأیید، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.set(pin, password); renderer.showToast('PIN سریع تنظیم شد.'); refresh(); } catch (error) { renderer.showToast(renderer.readableError(error, 'تنظیم PIN ناموفق بود.'), true); } };
+  renderer.$('#clearQuickPinButton').onclick = async () => { const password = window.prompt('برای حذف PIN، رمز عبور فعلی را وارد کنید:') || ''; try { await window.api.auth.quickPin.clear(password); renderer.showToast('PIN سریع حذف شد.'); refresh(); } catch (error) { renderer.showToast(renderer.readableError(error, 'حذف PIN ناموفق بود.'), true); } };
   refresh();
 }
 installQuickPinSettings();
 window.api.settings.get().then((settings) => {
-  applyAppearanceSettings(settings.appearance || {});
-  if (settings.currency) uiCurrency = { ...uiCurrency, ...settings.currency };
+  renderer.applyAppearanceSettings(settings.appearance || {});
+  if (settings.currency) renderer.uiCurrency = { ...uiCurrency, ...settings.currency };
   const configuredMethod = settings.sales?.paymentMethod;
-  if (['cash', 'card', 'check'].includes(configuredMethod)) defaultSettlementMethod = configuredMethod;
+  if (['cash', 'card', 'check'].includes(configuredMethod)) renderer.defaultSettlementMethod = configuredMethod;
   applyDefaultPaymentMethod(document);
 }).catch(() => {});
 
 function applyDefaultPaymentMethod(root = document) {
   root.querySelectorAll?.('.payment-method,#detailPaymentMethod').forEach((select) => {
-    if (['cash', 'card', 'check'].includes(defaultSettlementMethod)) select.value = defaultSettlementMethod;
-    if (select.id === 'detailPaymentMethod') $('#detailCheckFields')?.classList.toggle('hidden', select.value !== 'check');
+    if (['cash', 'card', 'check'].includes(renderer.defaultSettlementMethod)) select.value = renderer.defaultSettlementMethod;
+    if (select.id === 'detailPaymentMethod') renderer.$('#detailCheckFields')?.classList.toggle('hidden', select.value !== 'check');
   });
 }
 
@@ -107,7 +107,7 @@ function printPaymentReceipt(invoice, payment) {
   receipt.className = 'payment-receipt';
   const party = invoice.partyName || 'بدون طرف حساب';
   const methodLabel = payment.method === 'card' ? 'کارت' : payment.method === 'check' ? `چک ${payment.checkNumber || ''}` : 'نقدی';
-  receipt.innerHTML = `<div class="payment-receipt-heading"><h2>رسید پرداخت</h2><small>Acclectron</small></div><div class="payment-receipt-row"><span>شماره فاکتور</span><strong>${esc(invoice.invoice_number || '')}</strong></div><div class="payment-receipt-row"><span>طرف حساب</span><strong>${esc(party)}</strong></div><div class="payment-receipt-row"><span>تاریخ</span><strong>${isoToJalali(new Date().toISOString().slice(0, 10))}</strong></div><div class="payment-receipt-row"><span>روش پرداخت</span><strong>${esc(methodLabel)}</strong></div><div class="payment-receipt-total"><span>مبلغ پرداختی</span><strong>${money(payment.amount)}</strong></div><p>این رسید بابت تسویه فاکتور صادر شده است.</p></section>`;
+  receipt.innerHTML = `<div class="payment-receipt-heading"><h2>رسید پرداخت</h2><small>Acclectron</small></div><div class="payment-receipt-row"><span>شماره فاکتور</span><strong>${renderer.esc(invoice.invoice_number || '')}</strong></div><div class="payment-receipt-row"><span>طرف حساب</span><strong>${renderer.esc(party)}</strong></div><div class="payment-receipt-row"><span>تاریخ</span><strong>${renderer.isoToJalali(new Date().toISOString().slice(0, 10))}</strong></div><div class="payment-receipt-row"><span>روش پرداخت</span><strong>${renderer.esc(methodLabel)}</strong></div><div class="payment-receipt-total"><span>مبلغ پرداختی</span><strong>${renderer.money(payment.amount)}</strong></div><p>این رسید بابت تسویه فاکتور صادر شده است.</p></section>`;
   document.body.append(receipt);
   document.body.classList.add('printing-payment-receipt');
   const cleanup = () => {
@@ -133,28 +133,28 @@ function invoicePrintMarkup(invoice, settings, kind = 'sale') {
   const number = (value) => faDigits(value);
   const rows = (invoice.items || []).map((item, index) => `<tr>
     <td>${number(index + 1)}</td>
-    <td class="product-name"><strong>${number(esc(item.productName || ''))}</strong><small>${number(esc(item.productCode || ''))}</small></td>
-    ${showUnit ? `<td>${number(esc(item.unitName || item.unitSymbol || 'عدد'))}</td>` : ''}
+    <td class="product-name"><strong>${number(renderer.esc(item.productName || ''))}</strong><small>${number(renderer.esc(item.productCode || ''))}</small></td>
+    ${showUnit ? `<td>${number(renderer.esc(item.unitName || item.unitSymbol || 'عدد'))}</td>` : ''}
     <td>${number(new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(Number(item.quantity || 0)))}</td>
-    <td>${money(item.unit_price)}</td>
-    ${showDiscount ? `<td>${money(item.discount)}</td>` : ''}
-    <td>${money(item.total)}</td>
+    <td>${renderer.money(item.unit_price)}</td>
+    ${showDiscount ? `<td>${renderer.money(item.discount)}</td>` : ''}
+    <td>${renderer.money(item.total)}</td>
   </tr>`).join('');
   const logoUrl = store.logoPath ? encodeURI(`file:///${String(store.logoPath).replace(/\\/g, '/')}`) : '';
-  const logo = logoUrl ? `<img class="invoice-print-logo" src="${esc(logoUrl)}" alt="لوگو">` : '';
-  const storeInfo = print.showStoreInfo !== false ? `<section class="invoice-print-store-info invoice-print-store-info-bottom"><div><b>تلفن:</b> ${number(esc(store.phone || '—'))}</div><div><b>کد پستی:</b> ${number(esc(store.postalCode || '—'))}</div><div class="wide"><b>آدرس:</b> ${number(esc(store.address || '—'))}</div></section>` : '';
+  const logo = logoUrl ? `<img class="invoice-print-logo" src="${renderer.esc(logoUrl)}" alt="لوگو">` : '';
+  const storeInfo = print.showStoreInfo !== false ? `<section class="invoice-print-store-info invoice-print-store-info-bottom"><div><b>تلفن:</b> ${number(renderer.esc(store.phone || '—'))}</div><div><b>کد پستی:</b> ${number(renderer.esc(store.postalCode || '—'))}</div><div class="wide"><b>آدرس:</b> ${number(renderer.esc(store.address || '—'))}</div></section>` : '';
   const margin = ['narrow', 'normal', 'wide'].includes(String(print.margin)) ? String(print.margin) : 'normal';
   return `<article class="invoice-print-sheet paper-${paperSize.replace(/[^a-zA-Z0-9]/g, '')} orientation-${orientation} margin-${margin}" dir="rtl">
     <header class="invoice-print-header">
       <div class="invoice-print-logo-side">${print.showLogo !== false ? logo : ''}</div>
-      <div class="invoice-print-store-centered"><h1>${number(esc(store.name || 'فروشگاه'))}</h1>${store.slogan ? `<p>${number(esc(store.slogan))}</p>` : ''}</div>
-      <div class="invoice-print-title"><h2>${invoiceTitle}</h2><div>شماره: <strong>${number(esc(invoice.invoice_number || ''))}</strong></div><div>تاریخ: <strong>${number(isoToJalali(invoice.date))}</strong></div></div>
+      <div class="invoice-print-store-centered"><h1>${number(renderer.esc(store.name || 'فروشگاه'))}</h1>${store.slogan ? `<p>${number(renderer.esc(store.slogan))}</p>` : ''}</div>
+      <div class="invoice-print-title"><h2>${invoiceTitle}</h2><div>شماره: <strong>${number(renderer.esc(invoice.invoice_number || ''))}</strong></div><div>تاریخ: <strong>${number(renderer.isoToJalali(invoice.date))}</strong></div></div>
     </header>
-    <section class="invoice-print-customer"><div><b>طرف حساب:</b> ${number(esc(invoice.partyName || 'بدون طرف حساب'))}</div><div><b>تلفن:</b> ${number(esc(invoice.partyPhone || '—'))}</div><div><b>آدرس:</b> ${number(esc(invoice.partyAddress || '—'))}</div></section>
+    <section class="invoice-print-customer"><div><b>طرف حساب:</b> ${number(renderer.esc(invoice.partyName || 'بدون طرف حساب'))}</div><div><b>تلفن:</b> ${number(renderer.esc(invoice.partyPhone || '—'))}</div><div><b>آدرس:</b> ${number(renderer.esc(invoice.partyAddress || '—'))}</div></section>
     <table class="invoice-print-items columns-${visibleColumns} ${showUnit ? 'has-unit' : 'no-unit'} ${showDiscount ? 'has-discount' : 'no-discount'}"><thead><tr><th>ردیف</th><th>شرح کالا</th>${showUnit ? '<th>واحد</th>' : ''}<th>تعداد</th><th>قیمت واحد</th>${showDiscount ? '<th>تخفیف</th>' : ''}<th>مبلغ کل</th></tr></thead><tbody>${rows || `<tr><td colspan="${visibleColumns}">قلمی ثبت نشده است.</td></tr>`}</tbody></table>
-    <section class="invoice-print-summary"><div><span>جمع کالاها</span><strong>${money(Number(invoice.subtotal || 0))}</strong></div>${showDiscount ? `<div><span>تخفیف کل</span><strong>${money(Number(invoice.discount || 0))}</strong></div>` : ''}${print.showTax !== false ? `<div><span>مالیات</span><strong>${money(Number(invoice.tax || 0))}</strong></div>` : ''}<div class="grand"><span>مبلغ نهایی</span><strong>${money(Number(invoice.total || 0))}</strong></div><div><span>مبلغ پرداختی</span><strong>${money(Number(invoice.paid_amount || 0))}</strong></div><div><span>مانده</span><strong>${money(Number(invoice.remaining_amount || 0))}</strong></div></section>
+    <section class="invoice-print-summary"><div><span>جمع کالاها</span><strong>${renderer.money(Number(invoice.subtotal || 0))}</strong></div>${showDiscount ? `<div><span>تخفیف کل</span><strong>${renderer.money(Number(invoice.discount || 0))}</strong></div>` : ''}${print.showTax !== false ? `<div><span>مالیات</span><strong>${renderer.money(Number(invoice.tax || 0))}</strong></div>` : ''}<div class="grand"><span>مبلغ نهایی</span><strong>${renderer.money(Number(invoice.total || 0))}</strong></div><div><span>مبلغ پرداختی</span><strong>${renderer.money(Number(invoice.paid_amount || 0))}</strong></div><div><span>مانده</span><strong>${renderer.money(Number(invoice.remaining_amount || 0))}</strong></div></section>
     ${storeInfo}
-    <footer class="invoice-print-footer">${number(esc(store.footer || 'از خرید شما سپاسگزاریم.'))}</footer>
+    <footer class="invoice-print-footer">${number(renderer.esc(store.footer || 'از خرید شما سپاسگزاریم.'))}</footer>
   </article>`;
 }
 
@@ -191,7 +191,7 @@ const afterPaint = () => new Promise((resolve) => requestAnimationFrame(resolve)
 
 async function openInvoicePrintPreview(kind, id) {
   const [invoice, settings] = await Promise.all([window.api.invoices.details(kind, id), window.api.settings.get()]);
-  if (settings.currency) uiCurrency = { ...uiCurrency, ...settings.currency };
+  if (settings.currency) renderer.uiCurrency = { ...uiCurrency, ...settings.currency };
   const previousPrintZoom = document.documentElement.style.zoom;
   document.querySelector('#invoicePrintPreviewBackdrop')?.remove();
   const backdrop = document.createElement('div');
@@ -235,7 +235,7 @@ async function openInvoicePrintPreview(kind, id) {
       .then(close)
       .catch((error) => {
         setPrintMode(false);
-        showToast(error.message || 'چاپ فاکتور انجام نشد.', true);
+        renderer.showToast(error.message || 'چاپ فاکتور انجام نشد.', true);
       });
   });
   backdrop.querySelector('.invoice-preview-pdf').addEventListener('click', () => {
@@ -243,16 +243,16 @@ async function openInvoicePrintPreview(kind, id) {
     afterPaint().then(() => window.api.print.invoicePdf({ print: settings.print, fileName: `${invoiceTitle}-${faDigits(invoice.invoice_number || '')}`, ...invoicePrintPayload(settings) }))
       .then((result) => {
         setPrintMode(false);
-        if (!result?.canceled) showToast(`PDF ذخیره شد: ${result.filePath}`);
+        if (!result?.canceled) renderer.showToast(`PDF ذخیره شد: ${result.filePath}`);
       })
       .catch((error) => {
         setPrintMode(false);
-        showToast(error.message || 'خروجی PDF ساخته نشد.', true);
+        renderer.showToast(error.message || 'خروجی PDF ساخته نشد.', true);
       });
   });
 }
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   constants: { faDigits, afterPaint },
   functions: {
     initializeSettingsPageV2: { get: () => initializeSettingsPageV2, set: (value) => { initializeSettingsPageV2 = value; } },

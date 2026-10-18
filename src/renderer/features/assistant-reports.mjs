@@ -1,8 +1,8 @@
-import { publishRendererBindings } from '../shared/bridge.mjs';
+import { renderer, registerRendererBindings } from '../shared/runtime.mjs';
 
 function initializeAssistantPage() {
-  if ($('#assistantPage')) return;
-  $('#placeholderPage')?.insertAdjacentHTML('beforebegin', `
+  if (renderer.$('#assistantPage')) return;
+  renderer.$('#placeholderPage')?.insertAdjacentHTML('beforebegin', `
     <section id="assistantPage" class="page hidden">
       <div class="page-heading"><div><span class="eyebrow">پردازش درخواست متنی · کاملاً محلی و آفلاین</span><h2>دستیار هوشمند</h2></div></div>
       <div class="panel assistant-box">
@@ -33,14 +33,14 @@ function initializeAssistantPage() {
     </section>`);
   const state = { plan: null, lastAnswerKind: null };
   const appendBubble = (role, text) => {
-    const box = $('#assistantConversation');
+    const box = renderer.$('#assistantConversation');
     if (!box) return;
     box.classList.remove('hidden');
-    box.insertAdjacentHTML('beforeend', `<div class="assistant-bubble ${role}">${esc(text)}</div>`);
+    box.insertAdjacentHTML('beforeend', `<div class="assistant-bubble ${role}">${renderer.esc(text)}</div>`);
     box.scrollTop = box.scrollHeight;
   };
-  const toUser = (cents) => Math.round((Number(cents) || 0) / 100 * currencyFactor());
-  const toCents = (raw) => Math.max(0, Math.round(parsePriceInput(raw) * 100 / currencyFactor()));
+  const toUser = (cents) => Math.round((Number(cents) || 0) / 100 * renderer.currencyFactor());
+  const toCents = (raw) => Math.max(0, Math.round(renderer.parsePriceInput(raw) * 100 / renderer.currencyFactor()));
   const fieldInput = (id, field) => document.querySelector(`.assistant-new-price[data-id="${id}"][data-field="${field}"]`);
   const columnLabels = { code: 'کد', name: 'نام کالا', category: 'دسته', stock: 'موجودی', unit: 'واحد', barcode: 'بارکد', purchasePrice: 'قیمت خرید', wholesalePrice: 'قیمت عمده', retailPrice: 'قیمت فروش', margin: 'سود ٪' };
   const priceColumns = ['purchasePrice', 'wholesalePrice', 'retailPrice'];
@@ -51,16 +51,16 @@ function initializeAssistantPage() {
     const isAnswer = plan?.action?.type === 'answer';
     const columns = plan?.columns?.length ? plan.columns : ['code', 'name', 'stock', 'purchasePrice', 'wholesalePrice', 'retailPrice'];
     const targetField = adjust ? { purchase: 'purchasePrice', wholesale: 'wholesalePrice', retail: 'retailPrice' }[plan.action.field] : null;
-    $('#assistantApply').disabled = !adjust;
-    $('#assistantExport').disabled = !plan?.products?.length;
-    $('#assistantExportPdf').disabled = !plan?.products?.length;
+    renderer.$('#assistantApply').disabled = !adjust;
+    renderer.$('#assistantExport').disabled = !plan?.products?.length;
+    renderer.$('#assistantExportPdf').disabled = !plan?.products?.length;
     const fieldLabels = { purchase: 'قیمت خرید', wholesale: 'قیمت عمده', retail: 'قیمت فروش' };
-    $('#assistantSummary').textContent = isAnswer
+    renderer.$('#assistantSummary').textContent = isAnswer
       ? ''
       : plan
         ? `${new Intl.NumberFormat('fa-IR').format(plan.products.length)} کالا مطابقت دارد · روش: ${matchModeLabels[plan.matchMode] || 'تطبیق کلمه‌ای'}${adjust ? ` · عملیات: ${plan.action.direction > 0 ? 'افزایش' : 'کاهش'} ${new Intl.NumberFormat('fa-IR').format(plan.action.percent)}٪ ${fieldLabels[plan.action.field]} — مقادیر ستون «جدید» را می‌توانید قبل از اعمال ویرایش کنید.` : ' · فقط فهرست‌سازی (بدون تغییر قیمت)'}`
         : '';
-    $('#assistantHead').innerHTML = `<tr><th></th>${columns.map((column) => `<th>${columnLabels[column] || column}${column === targetField ? ' (فعلی ← جدید)' : ''}</th>`).join('')}</tr>`;
+    renderer.$('#assistantHead').innerHTML = `<tr><th></th>${columns.map((column) => `<th>${columnLabels[column] || column}${column === targetField ? ' (فعلی ← جدید)' : ''}</th>`).join('')}</tr>`;
     const cell = (p, column) => {
       if (column === 'margin') {
         if (p.marginPercent == null) return '—';
@@ -70,21 +70,21 @@ function initializeAssistantPage() {
         const current = { purchasePrice: p.purchasePrice, wholesalePrice: p.wholesalePrice, retailPrice: p.retailPrice }[column];
         const next = { purchasePrice: p.newPurchasePrice, wholesalePrice: p.newWholesalePrice, retailPrice: p.newRetailPrice }[column];
         return column === targetField
-          ? `${money(current)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="${column}" value="${toUser(next)}">`
-          : money(current);
+          ? `${renderer.money(current)} ← <input class="assistant-new-price" data-id="${p.id}" data-field="${column}" value="${toUser(next)}">`
+          : renderer.money(current);
       }
       const value = { code: p.code, name: p.name, category: p.categoryName || '—', stock: new Intl.NumberFormat('fa-IR').format(Number(p.stock || 0)), unit: p.unitSymbol || '—', barcode: p.barcode || '—' }[column];
-      return column === 'name' ? `${esc(value)}<small>${esc(p.unitSymbol || '')}</small>` : esc(value ?? '—');
+      return column === 'name' ? `${renderer.esc(value)}<small>${renderer.esc(p.unitSymbol || '')}</small>` : renderer.esc(value ?? '—');
     };
-    $('#assistantRows').innerHTML = plan?.products?.length ? plan.products.map((p) => `<tr><td><input class="assistant-select" type="checkbox" data-id="${p.id}" checked aria-label="انتخاب ${esc(p.name)}"><button type="button" class="assistant-remove" data-id="${p.id}" title="حذف از نتیجه">✕</button></td>${columns.map((column) => `<td>${cell(p, column)}</td>`).join('')}</tr>`).join('')
+    renderer.$('#assistantRows').innerHTML = plan?.products?.length ? plan.products.map((p) => `<tr><td><input class="assistant-select" type="checkbox" data-id="${p.id}" checked aria-label="انتخاب ${renderer.esc(p.name)}"><button type="button" class="assistant-remove" data-id="${p.id}" title="حذف از نتیجه">✕</button></td>${columns.map((column) => `<td>${cell(p, column)}</td>`).join('')}</tr>`).join('')
       : isAnswer ? ''
       : `<tr class="empty-row"><td colspan="${columns.length + 1}">ابتدا یک درخواست تحلیل کنید یا کالایی مطابق درخواست پیدا نشد.</td></tr>`;
   };
   const run = async () => {
-    const errorBox = $('#assistantError');
+    const errorBox = renderer.$('#assistantError');
     errorBox.classList.add('hidden');
-    const question = ($('#assistantInput').value || '').trim();
-    if (!question) { showToast('سؤال یا درخواست خود را در کادر بنویسید.', true); return; }
+    const question = (renderer.$('#assistantInput').value || '').trim();
+    if (!question) { renderer.showToast('سؤال یا درخواست خود را در کادر بنویسید.', true); return; }
     appendBubble('user', question);
     try {
       // Follow-ups ("و دیروز؟") re-ask the previous question, so the last
@@ -100,32 +100,32 @@ function initializeAssistantPage() {
       errorBox.classList.remove('hidden');
     }
   };
-  $('#assistantRun').addEventListener('click', run);
-  $('#assistantInput').addEventListener('keydown', (event) => {
+  renderer.$('#assistantRun').addEventListener('click', run);
+  renderer.$('#assistantInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); run(); }
   });
   document.querySelectorAll('.assistant-chip').forEach((chip) => chip.addEventListener('click', () => {
-    $('#assistantInput').value = chip.dataset.text || '';
+    renderer.$('#assistantInput').value = chip.dataset.text || '';
     run();
   }));
-  $('#assistantRows').addEventListener('click', (event) => {
+  renderer.$('#assistantRows').addEventListener('click', (event) => {
     const remove = event.target.closest('.assistant-remove');
     if (!remove || !state.plan) return;
     state.plan.products = state.plan.products.filter((product) => Number(product.id) !== Number(remove.dataset.id));
     render();
   });
-  $('#assistantSelectAll').addEventListener('change', (event) => {
+  renderer.$('#assistantSelectAll').addEventListener('change', (event) => {
     document.querySelectorAll('.assistant-select').forEach((box) => { box.checked = event.target.checked; });
   });
-  $('#assistantApply').addEventListener('click', async () => {
+  renderer.$('#assistantApply').addEventListener('click', async () => {
     const selected = [...document.querySelectorAll('.assistant-select:checked')].map((box) => Number(box.dataset.id));
-    if (!selected.length) return showToast('هیچ کالایی انتخاب نشده است.', true);
+    if (!selected.length) return renderer.showToast('هیچ کالایی انتخاب نشده است.', true);
     const selectedIds = new Set(selected);
     const riskyCount = (state.plan?.products || []).filter((p) => selectedIds.has(Number(p.id)) && p.belowCost).length;
     const message = riskyCount
       ? `هشدار: در ${new Intl.NumberFormat('fa-IR').format(riskyCount)} کالا قیمت فروش به زیر قیمت خرید می‌رسد (حاشیه سود منفی). قیمت‌ها اعمال شود؟`
       : `قیمت‌های ویرایش‌شده روی ${new Intl.NumberFormat('fa-IR').format(selected.length)} کالا اعمال شود؟`;
-    if (!await showConfirmDialog({ title: 'اعمال تغییرات قیمت', message, confirmText: 'اعمال شود', destructive: riskyCount > 0 })) return;
+    if (!await renderer.showConfirmDialog({ title: 'اعمال تغییرات قیمت', message, confirmText: 'اعمال شود', destructive: riskyCount > 0 })) return;
     try {
       const result = await window.api.ai.apply(selected.map((id) => {
         const update = { id };
@@ -135,9 +135,9 @@ function initializeAssistantPage() {
         });
         return update;
       }));
-      showToast(`${new Intl.NumberFormat('fa-IR').format(result.updated)} کالا به‌روزرسانی شد.`);
+      renderer.showToast(`${new Intl.NumberFormat('fa-IR').format(result.updated)} کالا به‌روزرسانی شد.`);
       await run();
-    } catch (error) { showToast(error?.message || 'اعمال تغییرات انجام نشد.', true); }
+    } catch (error) { renderer.showToast(error?.message || 'اعمال تغییرات انجام نشد.', true); }
   });
   const buildExportRows = () => {
     const selected = new Set([...document.querySelectorAll('.assistant-select:checked')].map((box) => Number(box.dataset.id)));
@@ -150,7 +150,7 @@ function initializeAssistantPage() {
         const current = { code: p.code, name: p.name, category: p.categoryName, stock: new Intl.NumberFormat('fa-IR').format(Number(p.stock || 0)), unit: p.unitSymbol, barcode: p.barcode, purchasePrice: toUser(p.purchasePrice), wholesalePrice: toUser(p.wholesalePrice), retailPrice: toUser(p.retailPrice), margin: p.marginPercent == null ? '—' : `${p.marginPercent}٪` }[column];
         if (column === targetField) {
           const input = fieldInput(p.id, column);
-          return [current, input ? Math.round(toCents(input.value) / 100 * currencyFactor()) : current];
+          return [current, input ? Math.round(toCents(input.value) / 100 * renderer.currencyFactor()) : current];
         }
         return [current];
       }));
@@ -162,18 +162,18 @@ function initializeAssistantPage() {
       const result = kind === 'pdf'
         ? await window.api.ai.exportPdf(buildExportRows(), 'دستیار-هوشمند')
         : await window.api.ai.exportCsv(buildExportRows(), 'دستیار-هوشمند');
-      if (!result.canceled) showToast(kind === 'pdf' ? 'خروجی PDF ذخیره شد.' : 'خروجی CSV ذخیره شد.');
-    } catch (error) { showToast(error?.message || 'خروجی انجام نشد.', true); }
+      if (!result.canceled) renderer.showToast(kind === 'pdf' ? 'خروجی PDF ذخیره شد.' : 'خروجی CSV ذخیره شد.');
+    } catch (error) { renderer.showToast(error?.message || 'خروجی انجام نشد.', true); }
   };
-  $('#assistantExport').addEventListener('click', () => exportOutput('csv'));
-  $('#assistantExportPdf').addEventListener('click', () => exportOutput('pdf'));
-  $('#assistantUndo').addEventListener('click', async () => {
-    if (!await showConfirmDialog({ title: 'واگردانی آخرین عملیات', message: 'قیمت‌های آخرین اعمالِ دستیار هوشمند به مقادیر قبلی برگردد؟', confirmText: 'واگردانی', destructive: true })) return;
+  renderer.$('#assistantExport').addEventListener('click', () => exportOutput('csv'));
+  renderer.$('#assistantExportPdf').addEventListener('click', () => exportOutput('pdf'));
+  renderer.$('#assistantUndo').addEventListener('click', async () => {
+    if (!await renderer.showConfirmDialog({ title: 'واگردانی آخرین عملیات', message: 'قیمت‌های آخرین اعمالِ دستیار هوشمند به مقادیر قبلی برگردد؟', confirmText: 'واگردانی', destructive: true })) return;
     try {
       const result = await window.api.ai.undo();
-      showToast(`${new Intl.NumberFormat('fa-IR').format(result.undone)} کالا به قیمت‌های قبلی بازگشت.`);
+      renderer.showToast(`${new Intl.NumberFormat('fa-IR').format(result.undone)} کالا به قیمت‌های قبلی بازگشت.`);
       await run();
-    } catch (error) { showToast(error?.message || 'واگردانی انجام نشد.', true); }
+    } catch (error) { renderer.showToast(error?.message || 'واگردانی انجام نشد.', true); }
   });
 }
 
@@ -188,7 +188,7 @@ if (assistantNavTarget && !document.querySelector('[data-page="assistant"]')) {
 // wrapper assigned in 02-management.js. 02 calls this by name at page-click
 // time (after every chunk has loaded).
 function setPageRouter(page) {
-  initializeManagementMarkup();
+  renderer.initializeManagementMarkup();
   // Lazy page markup must be created before the visibility toggle below runs,
   // otherwise the freshly-created section keeps its initial "hidden" class
   // and the first visit renders an empty content area.
@@ -196,7 +196,7 @@ function setPageRouter(page) {
   const titles = { dashboard: 'داشبورد', sales: 'فروش روزانه', 'sales-invoice': 'فاکتور فروش', purchases: 'فاکتور خرید', 'sales-invoices': 'فاکتورهای فروش', 'purchase-invoices': 'فاکتورهای خرید', products: 'مدیریت کالاها', categories: 'دسته‌بندی‌ها', customers: 'مدیریت مشتریان', ledger: 'گردش حساب', inventory: 'انبارگردانی', returns: 'مرجوعی‌ها', checks: 'چک‌ها و سررسیدها', installments: 'مدیریت اقساط', cash: 'صندوق و هزینه‌ها', 'profit-loss': 'سود و زیان', users: 'کاربران و لاگ', reports: 'گزارش‌ها', assistant: 'دستیار هوشمند', settings: 'تنظیمات' };
   const view = page === 'customers' ? 'parties' : page;
   const pageId = view === 'sales-invoice' ? 'salesInvoice' : view === 'sales-invoices' ? 'salesInvoices' : view === 'purchase-invoices' ? 'purchaseInvoices' : view === 'profit-loss' ? 'profitLoss' : view;
-  ['dashboard', 'sales', 'salesInvoice', 'purchases', 'salesInvoices', 'purchaseInvoices', 'products', 'categories', 'parties', 'ledger', 'inventory', 'returns', 'checks', 'installments', 'cash', 'profitLoss', 'users', 'reports', 'assistant', 'placeholder'].forEach((id) => { const node = $(`#${id}Page`); if (node) node.classList.toggle('hidden', id !== pageId && !(id === 'placeholder' && !['dashboard', 'sales', 'salesInvoice', 'purchases', 'salesInvoices', 'purchaseInvoices', 'products', 'categories', 'parties', 'ledger', 'inventory', 'returns', 'checks', 'installments', 'cash', 'profitLoss', 'users', 'reports', 'assistant'].includes(pageId))); });
+  ['dashboard', 'sales', 'salesInvoice', 'purchases', 'salesInvoices', 'purchaseInvoices', 'products', 'categories', 'parties', 'ledger', 'inventory', 'returns', 'checks', 'installments', 'cash', 'profitLoss', 'users', 'reports', 'assistant', 'placeholder'].forEach((id) => { const node = renderer.$(`#${id}Page`); if (node) node.classList.toggle('hidden', id !== pageId && !(id === 'placeholder' && !['dashboard', 'sales', 'salesInvoice', 'purchases', 'salesInvoices', 'purchaseInvoices', 'products', 'categories', 'parties', 'ledger', 'inventory', 'returns', 'checks', 'installments', 'cash', 'profitLoss', 'users', 'reports', 'assistant'].includes(pageId))); });
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.page === page));
   const invoicePage = ['sales-invoice', 'purchases', 'sales-invoices', 'purchase-invoices'].includes(page);
   const invoiceMenu = document.querySelector('.invoice-menu');
@@ -210,21 +210,21 @@ function setPageRouter(page) {
   productMenu?.querySelector('.product-submenu')?.classList.toggle('hidden', !productPage && !productMenu.classList.contains('open'));
   productMenu?.querySelector('.product-menu-toggle')?.classList.toggle('active', productPage);
   productMenu?.querySelector('.product-menu-toggle')?.setAttribute('aria-expanded', String(productPage || productMenu?.classList.contains('open')));
-  $('#pageTitle').textContent = titles[page] || page; $('#windowContext').textContent = titles[page] || page;
-  if (page === 'products') loadManagedProducts(); if (page === 'categories') loadManagedCategories(); if (page === 'customers') loadManagedParties();
+  renderer.$('#pageTitle').textContent = titles[page] || page; renderer.$('#windowContext').textContent = titles[page] || page;
+  if (page === 'products') renderer.loadManagedProducts(); if (page === 'categories') renderer.loadManagedCategories(); if (page === 'customers') renderer.loadManagedParties();
   // The product grid is seeded once at boot, but its first load runs before
   // login and is rejected by the IPC guard; stock and prices also change with
   // every sale/purchase/return, so re-read the catalogue on every entry.
-  if (page === 'sales') loadSaleProducts().catch(() => {});
-  if (page === 'sales-invoice') loadKeyboardInvoice('sale').catch(() => {});
-  if (page === 'purchases') loadKeyboardInvoice('purchase').catch(() => {});
-  if (page === 'sales-invoices') loadInvoiceList('sales'); if (page === 'purchase-invoices') loadInvoiceList('purchases');
+  if (page === 'sales') renderer.loadSaleProducts().catch(() => {});
+  if (page === 'sales-invoice') renderer.loadKeyboardInvoice('sale').catch(() => {});
+  if (page === 'purchases') renderer.loadKeyboardInvoice('purchase').catch(() => {});
+  if (page === 'sales-invoices') renderer.loadInvoiceList('sales'); if (page === 'purchase-invoices') renderer.loadInvoiceList('purchases');
   if (page === 'reports') loadSalesReport();
 }
 
 function initializeReportsPage() {
-  if ($('#reportsPage')) return;
-  const placeholder = $('#placeholderPage');
+  if (renderer.$('#reportsPage')) return;
+  const placeholder = renderer.$('#placeholderPage');
   if (!placeholder) return;
   placeholder.insertAdjacentHTML('beforebegin', `
     <section id="reportsPage" class="page hidden report-page">
@@ -240,9 +240,9 @@ function initializeReportsPage() {
       </div>
       <div id="reportError" class="form-error hidden"></div>
       <div class="report-metrics">
-        <div class="metric-card"><span>فروش خالص</span><strong id="reportNetSales">${money(0)}</strong><small id="reportInvoiceCount">۰ فاکتور</small></div>
-        <div class="metric-card"><span>سود ناخالص</span><strong id="reportProfit">${money(0)}</strong><small id="reportCost">هزینه: ${money(0)}</small></div>
-        <div class="metric-card"><span>دریافتی</span><strong id="reportPaid">${money(0)}</strong><small id="reportRemaining">مانده: ${money(0)}</small></div>
+        <div class="metric-card"><span>فروش خالص</span><strong id="reportNetSales">${renderer.money(0)}</strong><small id="reportInvoiceCount">۰ فاکتور</small></div>
+        <div class="metric-card"><span>سود ناخالص</span><strong id="reportProfit">${renderer.money(0)}</strong><small id="reportCost">هزینه: ${renderer.money(0)}</small></div>
+        <div class="metric-card"><span>دریافتی</span><strong id="reportPaid">${renderer.money(0)}</strong><small id="reportRemaining">مانده: ${renderer.money(0)}</small></div>
         <div class="metric-card"><span>تعداد کالا</span><strong id="reportItems">۰</strong><small id="reportSources">روزانه: ۰ | فاکتور: ۰</small></div>
       </div>
       <div id="reportAdjustments" class="report-adjustments"></div>
@@ -260,44 +260,44 @@ function initializeReportsPage() {
         <section class="panel"><div class="panel-heading"><h3>مشتریان برتر</h3></div><div id="reportCustomerTable" class="table-wrap"></div></section>
       </div>
     </section>`);
-  $('#reportApply').addEventListener('click', loadSalesReport);
-  $('#reportRefresh').addEventListener('click', loadSalesReport);
-  $('#reportExportCsv').addEventListener('click', async () => {
+  renderer.$('#reportApply').addEventListener('click', loadSalesReport);
+  renderer.$('#reportRefresh').addEventListener('click', loadSalesReport);
+  renderer.$('#reportExportCsv').addEventListener('click', async () => {
     try {
       const result = await window.api.reports.exportCsv('sales', {
         from: reportDateValue('reportFrom'),
         to: reportDateValue('reportTo'),
-        source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day'
+        source: renderer.$('#reportSource')?.value || '', period: renderer.$('#reportPeriod')?.value || 'day'
       });
-      if (!result?.canceled) showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
-    } catch (e) { showToast(readableError(e, 'خروجی Excel ناموفق بود.'), true); }
+      if (!result?.canceled) renderer.showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
+    } catch (e) { renderer.showToast(renderer.readableError(e, 'خروجی Excel ناموفق بود.'), true); }
   });
-  $('#reportExportPdf').addEventListener('click', async () => {
+  renderer.$('#reportExportPdf').addEventListener('click', async () => {
     document.body.classList.add('printing-report');
     try {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const result = await window.api.reports.exportPdf({ fileName: `گزارش-فروش-${new Date().toISOString().slice(0, 10)}` });
-      if (!result?.canceled) showToast(`فایل PDF ذخیره شد: ${result.filePath}`);
-    } catch (e) { showToast(readableError(e, 'خروجی PDF ناموفق بود.'), true); }
+      if (!result?.canceled) renderer.showToast(`فایل PDF ذخیره شد: ${result.filePath}`);
+    } catch (e) { renderer.showToast(renderer.readableError(e, 'خروجی PDF ناموفق بود.'), true); }
     finally { document.body.classList.remove('printing-report'); }
   });
   const today = new Date().toISOString().slice(0, 10);
-  $('#reportFrom').value = reportIsoToJalali(today);
-  $('#reportTo').value = reportIsoToJalali(today);
-  bindJalaliDatePickers(true);
+  renderer.$('#reportFrom').value = reportIsoToJalali(today);
+  renderer.$('#reportTo').value = reportIsoToJalali(today);
+  renderer.bindJalaliDatePickers(true);
 }
 
 function reportIsoToJalali(iso) {
   const [year, month, day] = String(iso || '').split('-').map(Number);
   if (!year || !month || !day) return '';
-  return gregorianToJalali(year, month, day).map((part) => String(part).padStart(2, '0')).join('/');
+  return renderer.gregorianToJalali(year, month, day).map((part) => String(part).padStart(2, '0')).join('/');
 }
 
 function reportDateValue(id) {
-  const input = $(`#${id}`);
+  const input = renderer.$(`#${id}`);
   if (!input || !input.value) return '';
-  const parts = normalizeDigits(input.value).replace(/-/g, '/').split('/').map(Number);
-  return parts.length === 3 ? jalaliToGregorian(parts[0], parts[1], parts[2]) : '';
+  const parts = renderer.normalizeDigits(input.value).replace(/-/g, '/').split('/').map(Number);
+  return parts.length === 3 ? renderer.jalaliToGregorian(parts[0], parts[1], parts[2]) : '';
 }
 
 // Top-level copy of the Persian-digit mapper: reportPeriodLabel runs in the
@@ -306,12 +306,12 @@ const toPersianDigits = (value) => String(value).replace(/\d/g, (digit) => '۰۱
 
 function reportPeriodLabel(value) {
   const period = String(value || '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(period)) return toPersianDigits(reportIsoToJalali(period).slice(5));
-  if (/^\d{4}-\d{2}$/.test(period)) {
+  if (/^\d{4}-\d{2}-\d{2}renderer.$/.test(period)) return toPersianDigits(reportIsoToJalali(period).slice(5));
+  if (/^\d{4}-\d{2}renderer.$/.test(period)) {
     const jalali = reportIsoToJalali(`${period}-01`).split('/');
     return toPersianDigits(`${jalali[0]}/${jalali[1]}`);
   }
-  if (/^\d{4}$/.test(period)) return toPersianDigits(String(gregorianToJalali(Number(period), 1, 1)[0]));
+  if (/^\d{4}renderer.$/.test(period)) return toPersianDigits(String(renderer.gregorianToJalali(Number(period), 1, 1)[0]));
   return period;
 }
 
@@ -328,7 +328,7 @@ function reportSvgLine(container, points, series) {
   const grid = [0.25, 0.5, 0.75].map((ratio) => `<line x1="${pad}" y1="${y(min + range * ratio)}" x2="${width - pad}" y2="${y(min + range * ratio)}" class="chart-grid"/>`).join('')
     + (min < 0 ? `<line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" class="chart-zero"/>` : '');
   const paths = series.map((s) => `<polyline points="${points.map((p, i) => `${x(i)},${y(p[s.key])}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
-  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${esc(p.chartLabel || reportPeriodLabel(p.date))}</text>` : '')).join('');
+  const labels = points.map((p, i) => (i % Math.max(1, Math.ceil(points.length / 6)) === 0 ? `<text x="${x(i)}" y="${height - 8}" text-anchor="middle">${renderer.esc(p.chartLabel || reportPeriodLabel(p.date))}</text>` : '')).join('');
   const legend = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
   container.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img">${grid}${paths}${labels}</svg><div class="chart-legend">${legend}</div>`;
 }
@@ -343,8 +343,8 @@ function reportSvgBars(container, rows, valueKey, labelKey, color = '#6ee7b7', o
     const secondaryValue = options.secondaryValueKey ? Number(row[options.secondaryValueKey] || 0) : null;
     const secondary = secondaryValue === null
       ? ''
-      : `<small>${new Intl.NumberFormat('fa-IR').format(secondaryValue)} ${esc(options.secondaryLabel || '')}</small>`;
-    return `<div class="report-bar-row"><div class="report-bar-label"><span>${esc(String(row[labelKey] || '—'))}</span><strong><span>${money(displayedValue)}</span>${secondary}</strong></div><div class="report-bar-track"><i style="width:${Math.max(2, value / max * 100)}%;background:${color}"></i></div></div>`;
+      : `<small>${new Intl.NumberFormat('fa-IR').format(secondaryValue)} ${renderer.esc(options.secondaryLabel || '')}</small>`;
+    return `<div class="report-bar-row"><div class="report-bar-label"><span>${renderer.esc(String(row[labelKey] || '—'))}</span><strong><span>${renderer.money(displayedValue)}</span>${secondary}</strong></div><div class="report-bar-track"><i style="width:${Math.max(2, value / max * 100)}%;background:${color}"></i></div></div>`;
   }).join('')}</div>`;
 }
 
@@ -363,66 +363,66 @@ function reportFillDates(rows) {
 
 async function loadSalesReport() {
   initializeReportsPage();
-  const error = $('#reportError');
+  const error = renderer.$('#reportError');
   if (!error) return;
   error.classList.add('hidden');
   try {
-    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: $('#reportSource')?.value || '', period: $('#reportPeriod')?.value || 'day' });
+    const data = await window.api.reports.sales({ from: reportDateValue('reportFrom'), to: reportDateValue('reportTo'), source: renderer.$('#reportSource')?.value || '', period: renderer.$('#reportPeriod')?.value || 'day' });
     const s = data.summary || {};
-    $('#reportNetSales').textContent = money(s.netSales);
-    $('#reportInvoiceCount').textContent = `${new Intl.NumberFormat('fa-IR').format(Number(s.invoiceCount || 0))} فاکتور`;
-    $('#reportProfit').textContent = money(s.profitTotal);
-    $('#reportProfit').classList.toggle('negative', Number(s.profitTotal) < 0);
-    $('#reportCost').textContent = `هزینه: ${money(s.costTotal)}`;
-    $('#reportPaid').textContent = money(s.paidAmount);
-    $('#reportRemaining').textContent = `مانده: ${money(s.remainingAmount)}`;
-    $('#reportItems').textContent = new Intl.NumberFormat('fa-IR').format(Number(s.itemCount || 0));
-    $('#reportSources').textContent = `روزانه: ${Number(s.dailyCount || 0)} | فاکتور: ${Number(s.formalCount || 0)}`;
-    $('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${money(s.subtotal)}</span><span>تخفیف: ${money(s.discount)}</span>${Number(s.returnsCount || 0) ? `<span>مرجوعی‌ها: ${money(s.returnsTotal)} (${new Intl.NumberFormat('fa-IR').format(Number(s.returnsCount || 0))} رسید، از فروش کسر شد)</span>` : ''}<span>مالیات: ${money(s.tax)} (در سود لحاظ نشده)</span>`;
+    renderer.$('#reportNetSales').textContent = renderer.money(s.netSales);
+    renderer.$('#reportInvoiceCount').textContent = `${new Intl.NumberFormat('fa-IR').format(Number(s.invoiceCount || 0))} فاکتور`;
+    renderer.$('#reportProfit').textContent = renderer.money(s.profitTotal);
+    renderer.$('#reportProfit').classList.toggle('negative', Number(s.profitTotal) < 0);
+    renderer.$('#reportCost').textContent = `هزینه: ${renderer.money(s.costTotal)}`;
+    renderer.$('#reportPaid').textContent = renderer.money(s.paidAmount);
+    renderer.$('#reportRemaining').textContent = `مانده: ${renderer.money(s.remainingAmount)}`;
+    renderer.$('#reportItems').textContent = new Intl.NumberFormat('fa-IR').format(Number(s.itemCount || 0));
+    renderer.$('#reportSources').textContent = `روزانه: ${Number(s.dailyCount || 0)} | فاکتور: ${Number(s.formalCount || 0)}`;
+    renderer.$('#reportAdjustments').innerHTML = `<span>جمع قبل از تخفیف: ${renderer.money(s.subtotal)}</span><span>تخفیف: ${renderer.money(s.discount)}</span>${Number(s.returnsCount || 0) ? `<span>مرجوعی‌ها: ${renderer.money(s.returnsTotal)} (${new Intl.NumberFormat('fa-IR').format(Number(s.returnsCount || 0))} رسید، از فروش کسر شد)</span>` : ''}<span>مالیات: ${renderer.money(s.tax)} (در سود لحاظ نشده)</span>`;
     const periodLabels = { day: 'روزانه', week: 'هفتگی', month: 'ماهانه', year: 'سالانه' };
-    const period = data.period || $('#reportPeriod')?.value || 'day';
+    const period = data.period || renderer.$('#reportPeriod')?.value || 'day';
     const periodRows = data.byPeriod || [];
     const periodTotal = periodRows.reduce((sum, row) => sum + Number(row.netSales || 0), 0);
     const previousPeriodTotal = periodRows.length > 1 ? Number(periodRows[periodRows.length - 2].netSales || 0) : 0;
     const latestPeriodTotal = periodRows.length ? Number(periodRows[periodRows.length - 1].netSales || 0) : 0;
     const growth = previousPeriodTotal ? ((latestPeriodTotal - previousPeriodTotal) / previousPeriodTotal) * 100 : null;
     const average = periodRows.length ? periodTotal / periodRows.length : 0;
-    $('#reportComparison').innerHTML = `<span>تجمیع: <b>${periodLabels[period]}</b></span><span>میانگین هر دوره: ${money(average)}</span><span>رشد آخرین دوره: <b class="${growth !== null && growth < 0 ? 'negative' : ''}">${growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`}</b></span>`;
-    $('#reportTrendNote').textContent = `تجمیع ${periodLabels[period]}`;
+    renderer.$('#reportComparison').innerHTML = `<span>تجمیع: <b>${periodLabels[period]}</b></span><span>میانگین هر دوره: ${renderer.money(average)}</span><span>رشد آخرین دوره: <b class="${growth !== null && growth < 0 ? 'negative' : ''}">${growth === null ? '—' : `${growth >= 0 ? '+' : ''}${growth.toFixed(1)}٪`}</b></span>`;
+    renderer.$('#reportTrendNote').textContent = `تجمیع ${periodLabels[period]}`;
     const daily = reportFillDates(data.byDate || []);
     const trendRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
-    reportSvgLine($('#reportTrendChart'), trendRows, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
+    reportSvgLine(renderer.$('#reportTrendChart'), trendRows, [{ key: 'netSales', label: 'فروش خالص', color: '#6ee7b7' }, { key: 'profitTotal', label: 'سود', color: '#60a5fa' }]);
     // The reports page reuses the same weighted-linear forecast the dashboard
     // shows, instead of a flat average, so the two never disagree. The single
     // line continues from actual months into the forecasted ones.
-    const forecastChart = $('#reportForecastChart');
+    const forecastChart = renderer.$('#reportForecastChart');
     if (forecastChart) {
       try {
         const forecastData = await window.api.reports.forecast({ period: 'month', horizon: 3 });
         if (!forecastData.history?.length) {
           forecastChart.innerHTML = '<div class="empty-state compact">برای پیش‌بینی هنوز سابقهٔ فروش وجود ندارد.</div>';
-          $('#reportForecastNote').textContent = forecastData.note || 'دادهٔ کافی برای پیش‌بینی وجود ندارد.';
+          renderer.$('#reportForecastNote').textContent = forecastData.note || 'دادهٔ کافی برای پیش‌بینی وجود ندارد.';
         } else {
-          const historyRows = (forecastData.history || []).map((row) => ({ date: row.period, chartLabel: dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
-          const predictionRows = (forecastData.predictions || []).map((row) => ({ date: row.period, chartLabel: dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
+          const historyRows = (forecastData.history || []).map((row) => ({ date: row.period, chartLabel: renderer.dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
+          const predictionRows = (forecastData.predictions || []).map((row) => ({ date: row.period, chartLabel: renderer.dashboardPeriodChartLabel(row.period, 'month'), netSales: row.netSales }));
           reportSvgLine(forecastChart, [...historyRows, ...predictionRows], [{ key: 'netSales', label: 'فروش واقعی / پیش‌بینی‌شده', color: '#fbbf24' }]);
-          $('#reportForecastNote').textContent = `${forecastData.note} · اطمینان: ${forecastData.confidence}`;
+          renderer.$('#reportForecastNote').textContent = `${forecastData.note} · اطمینان: ${forecastData.confidence}`;
         }
       } catch {
         forecastChart.innerHTML = '<div class="empty-state compact">داده کافی برای پیش‌بینی وجود ندارد.</div>';
-        $('#reportForecastNote').textContent = 'داده کافی برای پیش‌بینی وجود ندارد';
+        renderer.$('#reportForecastNote').textContent = 'داده کافی برای پیش‌بینی وجود ندارد';
       }
     }
     const sourceRows = (data.bySource || []).map((row) => ({ ...row, sourceLabel: row.source === 'daily' ? 'فروش روزانه' : 'فاکتور فروش' }));
-    reportSvgBars($('#reportSourceChart'), sourceRows, 'netSales', 'sourceLabel', '#c084fc');
-    reportSvgBars($('#reportProductChart'), data.byProduct || [], 'quantity', 'name', '#6ee7b7', {
+    reportSvgBars(renderer.$('#reportSourceChart'), sourceRows, 'netSales', 'sourceLabel', '#c084fc');
+    reportSvgBars(renderer.$('#reportProductChart'), data.byProduct || [], 'quantity', 'name', '#6ee7b7', {
       displayValueKey: 'netSales',
       secondaryValueKey: 'quantity',
       secondaryLabel: 'عدد فروش'
     });
     const tableRows = period === 'day' ? daily : periodRows.map((row) => ({ ...row, date: row.period }));
-    $('#reportDailyTable').innerHTML = tableRows.length ? `<table><thead><tr><th>${periodLabels[period]}</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th><th>میانگین فاکتور</th></tr></thead><tbody>${tableRows.slice().reverse().map((row) => `<tr><td>${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(row.date)) ? reportIsoToJalali(row.date) : String(row.date))}</td><td>${money(row.netSales)}</td><td>${money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td><td>${money(Number(row.invoiceCount || 0) ? Number(row.netSales || 0) / Number(row.invoiceCount) : 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
-    $('#reportCustomerTable').innerHTML = (data.byCustomer || []).length ? `<table><thead><tr><th>مشتری</th><th>فروش</th><th>سود</th></tr></thead><tbody>${data.byCustomer.map((row) => `<tr><td>${esc(row.customerName)}</td><td>${money(row.total)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${money(row.profitTotal)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
+    renderer.$('#reportDailyTable').innerHTML = tableRows.length ? `<table><thead><tr><th>${periodLabels[period]}</th><th>فروش خالص</th><th>هزینه</th><th>سود</th><th>فاکتور</th><th>میانگین فاکتور</th></tr></thead><tbody>${tableRows.slice().reverse().map((row) => `<tr><td>${renderer.esc(/^\d{4}-\d{2}-\d{2}renderer.$/.test(String(row.date)) ? reportIsoToJalali(row.date) : String(row.date))}</td><td>${renderer.money(row.netSales)}</td><td>${renderer.money(row.costTotal)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${renderer.money(row.profitTotal)}</td><td>${Number(row.invoiceCount || 0)}</td><td>${renderer.money(Number(row.invoiceCount || 0) ? Number(row.netSales || 0) / Number(row.invoiceCount) : 0)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
+    renderer.$('#reportCustomerTable').innerHTML = (data.byCustomer || []).length ? `<table><thead><tr><th>مشتری</th><th>فروش</th><th>سود</th></tr></thead><tbody>${data.byCustomer.map((row) => `<tr><td>${renderer.esc(row.customerName)}</td><td>${renderer.money(row.total)}</td><td class="${Number(row.profitTotal) < 0 ? 'negative' : ''}">${renderer.money(row.profitTotal)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty-state compact">داده‌ای وجود ندارد.</div>';
   } catch (err) {
     error.textContent = err.message || 'دریافت گزارش ناموفق بود.';
     error.classList.remove('hidden');
@@ -430,12 +430,12 @@ async function loadSalesReport() {
 }
 
 initializeReportsPage();
-initializeNotifications();
-initializeInstallmentNavigation();
-if (sessionReady) loadNotifications().catch(() => {});
-setInterval(() => { if (sessionReady) loadNotifications().catch(() => {}); }, 5 * 60 * 1000);
+renderer.initializeNotifications();
+renderer.initializeInstallmentNavigation();
+if (renderer.sessionReady) renderer.loadNotifications().catch(() => {});
+setInterval(() => { if (renderer.sessionReady) renderer.loadNotifications().catch(() => {}); }, 5 * 60 * 1000);
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   constants: { assistantNavTarget, toPersianDigits },
   functions: {
     initializeAssistantPage: { get: () => initializeAssistantPage, set: (value) => { initializeAssistantPage = value; } },

@@ -1,25 +1,25 @@
-import { publishRendererBindings } from '../shared/bridge.mjs';
+import { renderer, registerRendererBindings } from '../shared/runtime.mjs';
 
 let quickPinIdleTimer;
 let quickPinLocked = false;
 let quickPinMonitorStarted = false;
 
 function ensureQuickPinLockUI() {
-  if ($('#quickPinBackdrop')) return;
+  if (renderer.$('#quickPinBackdrop')) return;
   document.body.insertAdjacentHTML('beforeend', '<div id="quickPinBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:380px"><div class="modal-header"><div><span class="eyebrow">قفل سریع</span><h3>برنامه قفل شد</h3></div></div><form id="quickPinForm"><p>برای ادامه PIN سریع خود را وارد کنید.</p><label>PIN سریع<input id="quickPinInput" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" required></label><div id="quickPinError" class="form-error hidden"></div><button class="primary wide" type="submit">بازکردن قفل</button><button id="quickPinFullLogin" class="secondary wide" type="button">ورود با رمز عبور</button></form></div></div>');
-  $('#quickPinForm').addEventListener('submit', async (event) => {
+  renderer.$('#quickPinForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    try { await window.api.auth.quickPin.unlock($('#quickPinInput').value); quickPinLocked = false; $('#quickPinInput').value = ''; $('#quickPinBackdrop').classList.add('hidden'); resetQuickPinIdleTimer(); }
-    catch (error) { const box = $('#quickPinError'); box.textContent = readableError(error, 'بازکردن قفل ناموفق بود.'); box.classList.remove('hidden'); }
+    try { await window.api.auth.quickPin.unlock(renderer.$('#quickPinInput').value); quickPinLocked = false; renderer.$('#quickPinInput').value = ''; renderer.$('#quickPinBackdrop').classList.add('hidden'); resetQuickPinIdleTimer(); }
+    catch (error) { const box = renderer.$('#quickPinError'); box.textContent = renderer.readableError(error, 'بازکردن قفل ناموفق بود.'); box.classList.remove('hidden'); }
   });
-  $('#quickPinFullLogin').addEventListener('click', () => { quickPinLocked = true; clearTimeout(quickPinIdleTimer); $('#quickPinBackdrop').classList.add('hidden'); $('#loginBackdrop').classList.remove('hidden'); $('#loginPassword')?.focus(); });
+  renderer.$('#quickPinFullLogin').addEventListener('click', () => { quickPinLocked = true; clearTimeout(quickPinIdleTimer); renderer.$('#quickPinBackdrop').classList.add('hidden'); renderer.$('#loginBackdrop').classList.remove('hidden'); renderer.$('#loginPassword')?.focus(); });
 }
 
 function resetQuickPinIdleTimer() {
   clearTimeout(quickPinIdleTimer);
   if (quickPinLocked) return;
   quickPinIdleTimer = setTimeout(async () => {
-    try { const status = await window.api.auth.quickPin.status(); if (status.enabled) { quickPinLocked = true; ensureQuickPinLockUI(); $('#quickPinBackdrop').classList.remove('hidden'); $('#quickPinInput').focus(); } } catch {}
+    try { const status = await window.api.auth.quickPin.status(); if (status.enabled) { quickPinLocked = true; ensureQuickPinLockUI(); renderer.$('#quickPinBackdrop').classList.remove('hidden'); renderer.$('#quickPinInput').focus(); } } catch {}
   }, 15 * 60 * 1000);
 }
 
@@ -34,14 +34,14 @@ function startQuickPinIdleMonitor() {
 }
 
 async function initializeAuth() {
-  initializeOperationsPages();
-  const backdrop = $('#loginBackdrop');
+  renderer.initializeOperationsPages();
+  const backdrop = renderer.$('#loginBackdrop');
   try {
     const settings = await window.api.settings.get();
     const passwordless = settings.security?.passwordlessLogin === true;
-    $('#loginPasswordField')?.classList.toggle('hidden', passwordless);
-    $('#loginPassword')?.toggleAttribute('required', !passwordless);
-    if (passwordless) $('#loginHint').textContent = 'ورود بدون رمز فعال است؛ نام کاربری را وارد کنید.';
+    renderer.$('#loginPasswordField')?.classList.toggle('hidden', passwordless);
+    renderer.$('#loginPassword')?.toggleAttribute('required', !passwordless);
+    if (passwordless) renderer.$('#loginHint').textContent = 'ورود بدون رمز فعال است؛ نام کاربری را وارد کنید.';
   } catch {}
   try {
     const current = await window.api.auth.current();
@@ -50,7 +50,7 @@ async function initializeAuth() {
       startQuickPinIdleMonitor();
       // A session already exists (e.g. restored by a future persistence layer);
       // the boot data probes were skipped, so load them now.
-      refreshAfterLogin();
+      renderer.refreshAfterLogin();
       return;
     }
   } catch {}
@@ -60,19 +60,19 @@ function installLoginSubmitGuard() {
   if (document.body.dataset.loginSubmitGuard) return;
   document.body.dataset.loginSubmitGuard = '1';
   const submitLogin = async () => {
-    const error = $('#loginError');
-    const backdrop = $('#loginBackdrop');
+    const error = renderer.$('#loginError');
+    const backdrop = renderer.$('#loginBackdrop');
     error?.classList.add('hidden');
     try {
-      const session = await window.api.auth.login($('#loginUsername')?.value || '', $('#loginPassword')?.value || '');
+      const session = await window.api.auth.login(renderer.$('#loginUsername')?.value || '', renderer.$('#loginPassword')?.value || '');
       backdrop?.classList.add('hidden');
-      showToast('ورود موفق بود.');
-      warnDefaultPassword(session);
-      refreshAfterLogin();
+      renderer.showToast('ورود موفق بود.');
+      renderer.warnDefaultPassword(session);
+      renderer.refreshAfterLogin();
       startQuickPinIdleMonitor();
     } catch (e) {
       if (error) {
-        error.textContent = readableError(e, 'ورود ناموفق بود.');
+        error.textContent = renderer.readableError(e, 'ورود ناموفق بود.');
         error.classList.remove('hidden');
       }
     }
@@ -102,7 +102,7 @@ function initializeSoftwareAboutPage() {
     nav.insertAdjacentHTML('beforeend', '<button class="nav-item" data-page="about"><span>ⓘ</span><span class="nav-label">معرفی نرم‌افزار</span></button>');
   }
 
-  if (!$('#aboutPage')) {
+  if (!renderer.$('#aboutPage')) {
     footer.insertAdjacentHTML('beforebegin', `
       <section id="aboutPage" class="page hidden about-page">
         <div class="about-hero panel">
@@ -140,37 +140,37 @@ function initializeSoftwareAboutPage() {
   }
 }
 
-const previousSetManagedPageForOperations = setManagedPage;
-setManagedPage = function setManagedPageWithOperations(page) {
-  initializeOperationsPages();
-  initializeSidebarGroups();
+const previousSetManagedPageForOperations = renderer.setManagedPage;
+renderer.setManagedPage = function setManagedPageWithOperations(page) {
+  renderer.initializeOperationsPages();
+  renderer.initializeSidebarGroups();
   initializeSoftwareAboutPage();
   previousSetManagedPageForOperations(page);
-  $('#returnsPage')?.classList.toggle('hidden', page !== 'returns');
-  $('#cashPage')?.classList.toggle('hidden', page !== 'cash');
-  $('#ledgerPage')?.classList.toggle('hidden', page !== 'ledger');
-  $('#inventoryPage')?.classList.toggle('hidden', page !== 'inventory');
-  $('#installmentsPage')?.classList.toggle('hidden', page !== 'installments');
-  $('#aboutPage')?.classList.toggle('hidden', page !== 'about');
+  renderer.$('#returnsPage')?.classList.toggle('hidden', page !== 'returns');
+  renderer.$('#cashPage')?.classList.toggle('hidden', page !== 'cash');
+  renderer.$('#ledgerPage')?.classList.toggle('hidden', page !== 'ledger');
+  renderer.$('#inventoryPage')?.classList.toggle('hidden', page !== 'inventory');
+  renderer.$('#installmentsPage')?.classList.toggle('hidden', page !== 'installments');
+  renderer.$('#aboutPage')?.classList.toggle('hidden', page !== 'about');
   if (page === 'about') {
-    $('#placeholderPage')?.classList.add('hidden');
+    renderer.$('#placeholderPage')?.classList.add('hidden');
     document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.page === 'about'));
-    $('#pageTitle').textContent = 'معرفی نرم‌افزار';
-    $('#windowContext').textContent = 'معرفی نرم‌افزار';
+    renderer.$('#pageTitle').textContent = 'معرفی نرم‌افزار';
+    renderer.$('#windowContext').textContent = 'معرفی نرم‌افزار';
   }
-  if (page === 'returns') loadReturnsPage().catch((e) => showToast(e.message, true));
-  if (page === 'cash') loadCashPage().catch((e) => showToast(e.message, true));
-  if (page === 'ledger') loadLedgerPage().catch((e) => showToast(e.message, true));
-  if (page === 'inventory') loadInventoryPage().catch((e) => showToast(e.message, true));
-  if (page === 'users') loadUsersPage().catch((e) => showToast(e.message, true));
-  if (page === 'profit-loss') loadProfitLossPage().catch((e) => showToast(e.message, true));
-  if (page === 'checks') loadChecksPage().catch((e) => showToast(e.message, true));
-  if (page === 'installments') loadInstallmentsPage().catch((e) => showToast(e.message, true));
+  if (page === 'returns') renderer.loadReturnsPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'cash') renderer.loadCashPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'ledger') renderer.loadLedgerPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'inventory') renderer.loadInventoryPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'users') renderer.loadUsersPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'profit-loss') renderer.loadProfitLossPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'checks') renderer.loadChecksPage().catch((e) => renderer.showToast(e.message, true));
+  if (page === 'installments') renderer.loadInstallmentsPage().catch((e) => renderer.showToast(e.message, true));
 };
-initializeOperationsPages();
-initializeSidebarGroups();
+renderer.initializeOperationsPages();
+renderer.initializeSidebarGroups();
 initializeSoftwareAboutPage();
-bindJalaliDatePickers(true);
+renderer.bindJalaliDatePickers(true);
 installLoginSubmitGuard();
 initializeAuth();
 
@@ -181,33 +181,33 @@ initializeAuth();
 // initializeSalesMarkupFinal that builds the keyboard-invoice pages) had not
 // loaded yet at that point. Running them here reproduces the original
 // monolith's hoisting order, where all declarations existed before boot.
-initializeManagementMarkup();
-setManagedPage('dashboard');
+renderer.initializeManagementMarkup();
+renderer.setManagedPage('dashboard');
 
 // Add restore action to the existing backup settings tab.
 const backupPanel = document.querySelector('[data-settings-panel="backup"] .modal-actions');
-if (backupPanel && !$('#v2Restore')) {
+if (backupPanel && !renderer.$('#v2Restore')) {
   backupPanel.insertAdjacentHTML('afterbegin', '<button id="v2Restore" type="button" class="secondary">بازیابی پشتیبان</button>');
-  $('#v2Restore').addEventListener('click', async () => {
-    if (!await showConfirmDialog({ title: 'بازیابی پشتیبان', message: 'بازیابی پشتیبان، داده‌های فعلی را جایگزین می‌کند. ادامه می‌دهید؟', confirmText: 'بازیابی پشتیبان', destructive: true })) return;
-    try { const result = await window.api.settings.restore(); if (!result.canceled) { showToast(`پشتیبان بازیابی شد؛ نسخهٔ قبلی در مسیر زیر ذخیره شد. برنامه را دوباره باز کنید: ${result.safetyBackupPath}`); } } catch (e) { showToast(e.message, true); }
+  renderer.$('#v2Restore').addEventListener('click', async () => {
+    if (!await renderer.showConfirmDialog({ title: 'بازیابی پشتیبان', message: 'بازیابی پشتیبان، داده‌های فعلی را جایگزین می‌کند. ادامه می‌دهید؟', confirmText: 'بازیابی پشتیبان', destructive: true })) return;
+    try { const result = await window.api.settings.restore(); if (!result.canceled) { renderer.showToast(`پشتیبان بازیابی شد؛ نسخهٔ قبلی در مسیر زیر ذخیره شد. برنامه را دوباره باز کنید: ${result.safetyBackupPath}`); } } catch (e) { renderer.showToast(e.message, true); }
   });
 }
-if (backupPanel && !$('#v2OfficialStart')) {
+if (backupPanel && !renderer.$('#v2OfficialStart')) {
   backupPanel.insertAdjacentHTML('afterbegin', '<button id="v2OfficialStart" type="button" class="danger-button">شروع رسمی بدون دادهٔ نمونه</button>');
-  $('#v2OfficialStart').addEventListener('click', async () => {
-    if (!await showConfirmDialog({ title: 'شروع رسمی بدون دادهٔ نمونه', message: 'تمام داده‌های فعلیِ برنامه حذف می‌شوند و یک نسخهٔ پشتیبان خودکار ساخته خواهد شد. تنظیمات فروشگاه حفظ می‌شوند. ادامه می‌دهید؟', confirmText: 'ادامه و حذف داده‌ها', destructive: true })) return;
+  renderer.$('#v2OfficialStart').addEventListener('click', async () => {
+    if (!await renderer.showConfirmDialog({ title: 'شروع رسمی بدون دادهٔ نمونه', message: 'تمام داده‌های فعلیِ برنامه حذف می‌شوند و یک نسخهٔ پشتیبان خودکار ساخته خواهد شد. تنظیمات فروشگاه حفظ می‌شوند. ادامه می‌دهید؟', confirmText: 'ادامه و حذف داده‌ها', destructive: true })) return;
     try {
       const result = await window.api.settings.officialStart();
-      showToast(`شروع رسمی انجام شد. پشتیبان داده‌های قبلی: ${result.backupPath}`);
+      renderer.showToast(`شروع رسمی انجام شد. پشتیبان داده‌های قبلی: ${result.backupPath}`);
       setTimeout(() => window.location.reload(), 900);
     } catch (e) {
-      showToast(e.message, true);
+      renderer.showToast(e.message, true);
     }
   });
 }
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   constants: { previousSetManagedPageForOperations, backupPanel },
   mutable: {
     quickPinIdleTimer: { get: () => quickPinIdleTimer, set: (value) => { quickPinIdleTimer = value; } },

@@ -1,8 +1,8 @@
-import { publishRendererBindings } from '../shared/bridge.mjs';
+import { renderer, registerRendererBindings } from '../shared/runtime.mjs';
 
 function initializeSettingsPage() {
-  if ($('#settingsPage')) return;
-  const placeholder = $('#placeholderPage');
+  if (renderer.$('#settingsPage')) return;
+  const placeholder = renderer.$('#placeholderPage');
   if (!placeholder) return;
   placeholder.insertAdjacentHTML('beforebegin', `
     <section id="settingsPage" class="page hidden settings-page">
@@ -39,12 +39,12 @@ function initializeSettingsPage() {
     </section>`);
 
   async function loadPrinters(selected = '') {
-    const select = $('#settingsPrinter');
+    const select = renderer.$('#settingsPrinter');
     if (!select) return;
     try {
       const printers = await window.api.settings.printers();
       select.innerHTML = '<option value="">پرینتر پیش‌فرض سیستم</option>' +
-        printers.map((printer) => `<option value="${esc(printer.name)}">${esc(printer.displayName)}${printer.isDefault ? ' (پیش‌فرض)' : ''}</option>`).join('');
+        printers.map((printer) => `<option value="${renderer.esc(printer.name)}">${renderer.esc(printer.displayName)}${printer.isDefault ? ' (پیش‌فرض)' : ''}</option>`).join('');
       select.value = selected || '';
     } catch (error) {
       select.innerHTML = '<option value="">دریافت فهرست پرینترها ناموفق بود</option>';
@@ -55,99 +55,99 @@ function initializeSettingsPage() {
     const settings = await window.api.settings.get();
     const store = settings.store || {};
     const print = settings.print || {};
-    $('#settingsStoreName').value = store.name || '';
-    $('#settingsStoreSlogan').value = store.slogan || '';
-    $('#settingsStorePhone').value = store.phone || '';
-    $('#settingsStorePostalCode').value = store.postalCode || '';
-    $('#settingsStoreAddress').value = store.address || '';
-    $('#settingsStoreWebsite').value = store.website || '';
-    $('#settingsStoreInstagram').value = store.instagram || '';
-    $('#settingsStoreRubika').value = store.rubika || '';
-    $('#settingsInvoiceFooter').value = store.footer || '';
-    $('#settingsLogoPathValue').value = store.logoPath || '';
-    $('#settingsLogoPath').textContent = store.logoPath ? store.logoPath : 'لوگویی انتخاب نشده است.';
-    $('#settingsPaper').value = print.paperSize || 'A4';
-    $('#settingsColor').checked = print.color !== false;
-    $('#settingsAutoPrintSale').checked = print.autoPrintSale === true;
-    $('#settingsAutoPrintPurchase').checked = print.autoPrintPurchase === true;
+    renderer.$('#settingsStoreName').value = store.name || '';
+    renderer.$('#settingsStoreSlogan').value = store.slogan || '';
+    renderer.$('#settingsStorePhone').value = store.phone || '';
+    renderer.$('#settingsStorePostalCode').value = store.postalCode || '';
+    renderer.$('#settingsStoreAddress').value = store.address || '';
+    renderer.$('#settingsStoreWebsite').value = store.website || '';
+    renderer.$('#settingsStoreInstagram').value = store.instagram || '';
+    renderer.$('#settingsStoreRubika').value = store.rubika || '';
+    renderer.$('#settingsInvoiceFooter').value = store.footer || '';
+    renderer.$('#settingsLogoPathValue').value = store.logoPath || '';
+    renderer.$('#settingsLogoPath').textContent = store.logoPath ? store.logoPath : 'لوگویی انتخاب نشده است.';
+    renderer.$('#settingsPaper').value = print.paperSize || 'A4';
+    renderer.$('#settingsColor').checked = print.color !== false;
+    renderer.$('#settingsAutoPrintSale').checked = print.autoPrintSale === true;
+    renderer.$('#settingsAutoPrintPurchase').checked = print.autoPrintPurchase === true;
     await loadPrinters(print.printerName || '');
   }
 
-  $('#reloadPrinters').addEventListener('click', () => loadPrinters($('#settingsPrinter').value));
-  $('#chooseStoreLogo').addEventListener('click', async () => {
+  renderer.$('#reloadPrinters').addEventListener('click', () => loadPrinters(renderer.$('#settingsPrinter').value));
+  renderer.$('#chooseStoreLogo').addEventListener('click', async () => {
     const result = await window.api.settings.chooseLogo();
     if (!result.canceled) {
-      $('#settingsLogoPathValue').value = result.path;
-      $('#settingsLogoPath').textContent = result.path;
+      renderer.$('#settingsLogoPathValue').value = result.path;
+      renderer.$('#settingsLogoPath').textContent = result.path;
     }
   });
-  $('#storeSettingsForm').addEventListener('submit', async (event) => {
+  renderer.$('#storeSettingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const error = $('#storeSettingsError');
+    const error = renderer.$('#storeSettingsError');
     error.classList.add('hidden');
     try {
       const current = await window.api.settings.get();
       await window.api.settings.save({
         ...current,
         store: {
-          name: $('#settingsStoreName').value,
-          slogan: $('#settingsStoreSlogan').value,
-          phone: $('#settingsStorePhone').value,
-          postalCode: $('#settingsStorePostalCode').value,
-          address: $('#settingsStoreAddress').value,
-          website: $('#settingsStoreWebsite').value,
-          instagram: $('#settingsStoreInstagram').value,
-          rubika: $('#settingsStoreRubika').value,
-          footer: $('#settingsInvoiceFooter').value,
-          logoPath: $('#settingsLogoPathValue').value
+          name: renderer.$('#settingsStoreName').value,
+          slogan: renderer.$('#settingsStoreSlogan').value,
+          phone: renderer.$('#settingsStorePhone').value,
+          postalCode: renderer.$('#settingsStorePostalCode').value,
+          address: renderer.$('#settingsStoreAddress').value,
+          website: renderer.$('#settingsStoreWebsite').value,
+          instagram: renderer.$('#settingsStoreInstagram').value,
+          rubika: renderer.$('#settingsStoreRubika').value,
+          footer: renderer.$('#settingsInvoiceFooter').value,
+          logoPath: renderer.$('#settingsLogoPathValue').value
         }
       });
-      showToast('مشخصات فروشگاه ذخیره شد.');
+      renderer.showToast('مشخصات فروشگاه ذخیره شد.');
     } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
   });
-  $('#printSettingsForm').addEventListener('submit', async (event) => {
+  renderer.$('#printSettingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const error = $('#printSettingsError');
+    const error = renderer.$('#printSettingsError');
     error.classList.add('hidden');
     try {
       const current = await window.api.settings.get();
       await window.api.settings.save({
         ...current,
         print: {
-          printerName: $('#settingsPrinter').value,
-          paperSize: $('#settingsPaper').value,
-          color: $('#settingsColor').checked,
-          autoPrintSale: $('#settingsAutoPrintSale').checked,
-          autoPrintPurchase: $('#settingsAutoPrintPurchase').checked
+          printerName: renderer.$('#settingsPrinter').value,
+          paperSize: renderer.$('#settingsPaper').value,
+          color: renderer.$('#settingsColor').checked,
+          autoPrintSale: renderer.$('#settingsAutoPrintSale').checked,
+          autoPrintPurchase: renderer.$('#settingsAutoPrintPurchase').checked
         }
       });
-      showToast('تنظیمات چاپ ذخیره شد.');
+      renderer.showToast('تنظیمات چاپ ذخیره شد.');
     } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
   });
   // This original settings screen is superseded at parse time by
   // initializeSettingsPageV2 (03-settings-print.js), which rebuilds #settingsPage
   // and owns the post-login reload via refreshSettingsData. Its guarded reads
   // (units, printers) are rejected before login, so skip the boot copy.
-  if (sessionReady) loadSettings().catch(() => {});
+  if (renderer.sessionReady) loadSettings().catch(() => {});
 }
 
-const originalManagedPageForSettings = setManagedPage;
-setManagedPage = function setManagedPageWithSettings(page) {
+const originalManagedPageForSettings = renderer.setManagedPage;
+renderer.setManagedPage = function setManagedPageWithSettings(page) {
   initializeSettingsPage();
   // Resolved at call time: 04-invoices-assistant-reports.js loads later and
   // provides the full page router (all managed pages), which supersedes the
   // partial router defined earlier in this file.
-  (typeof setPageRouter === 'function' ? setPageRouter : originalManagedPageForSettings)(page);
+  (typeof renderer.setPageRouter === 'function' ? setPageRouter : originalManagedPageForSettings)(page);
   if (page === 'settings') {
-    $('#settingsPage')?.classList.remove('hidden');
-    $('#placeholderPage')?.classList.add('hidden');
+    renderer.$('#settingsPage')?.classList.remove('hidden');
+    renderer.$('#placeholderPage')?.classList.add('hidden');
   } else {
-    $('#settingsPage')?.classList.add('hidden');
+    renderer.$('#settingsPage')?.classList.add('hidden');
   }
 };
 initializeSettingsPage();
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   constants: { originalManagedPageForSettings },
   functions: {
     initializeSettingsPage: { get: () => initializeSettingsPage, set: (value) => { initializeSettingsPage = value; } }

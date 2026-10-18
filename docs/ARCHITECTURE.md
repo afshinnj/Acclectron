@@ -35,11 +35,15 @@ created by earlier features:
    inventory, users, checks, installments, and profit/loss pages.
 8. `src/renderer/features/auth.mjs` finishes routing and starts authentication.
 
-Feature files execute as separate ES modules. A temporary compatibility bridge
-publishes existing shared bindings on `window`; mutable bindings use accessors
-so later features can wrap them. This preserves the runtime contract while
-features move to explicit imports and exports. New shared APIs should use
-explicit module exports instead of adding bridge entries.
+Feature files execute as separate ES modules and import a shared `renderer`
+runtime object from `src/renderer/shared/runtime.mjs`. Each feature registers
+its public state and functions there through an explicit module import; the
+runtime uses accessors where later features wrap existing functions. These
+bindings are module scoped and are never installed on `window` or
+`globalThis`. The ordered bootstrap remains necessary while features extend
+shared behavior during initialization. New code should prefer direct named
+exports and imports when its dependency does not need to participate in this
+shared extension contract.
 
 ## Validation
 

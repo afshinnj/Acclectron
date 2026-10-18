@@ -1,8 +1,8 @@
-import { publishRendererBindings } from '../shared/bridge.mjs';
+import { renderer, registerRendererBindings } from '../shared/runtime.mjs';
 
 /* Returns, cashbook and restore workspace. */
 function initializeOperationsPages() {
-  if ($('#returnsPage')) return;
+  if (renderer.$('#returnsPage')) return;
   const footer = document.querySelector('footer');
   footer?.insertAdjacentHTML('beforebegin', `
     <section id="returnsPage" class="page hidden">
@@ -30,7 +30,7 @@ function initializeOperationsPages() {
     </section>
     <section id="cashPage" class="page hidden">
       <div class="page-heading"><div><span class="eyebrow">مدیریت مالی روزانه</span></div><button id="refreshCash" class="secondary">به‌روزرسانی</button></div>
-      <div class="report-metrics"><div class="metric-card"><span>دریافت</span><strong id="cashIncome">${money(0)}</strong></div><div class="metric-card"><span>پرداخت</span><strong id="cashExpense">${money(0)}</strong></div><div class="metric-card"><span>مانده</span><strong id="cashBalance">${money(0)}</strong></div></div>
+      <div class="report-metrics"><div class="metric-card"><span>دریافت</span><strong id="cashIncome">${renderer.money(0)}</strong></div><div class="metric-card"><span>پرداخت</span><strong id="cashExpense">${renderer.money(0)}</strong></div><div class="metric-card"><span>مانده</span><strong id="cashBalance">${renderer.money(0)}</strong></div></div>
       <form id="cashForm" class="panel form-grid"><label>نوع<select id="cashType"><option value="expense">هزینه / پرداخت</option><option value="income">دریافت</option></select></label><label>دسته‌بندی<input id="cashCategory" value="general"></label><label>روش<select id="cashMethod"><option value="cash">نقدی</option><option value="card">کارت</option><option value="bank">بانک</option><option value="other">سایر</option></select></label><label>مبلغ<input id="cashAmount" class="money-input" inputmode="decimal" required></label><label class="full-field">شرح<input id="cashDescription"></label><button class="primary" type="submit">ثبت تراکنش</button></form>
       <div id="cashError" class="form-error hidden"></div><div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>تاریخ</th><th>نوع</th><th>دسته‌بندی</th><th>روش</th><th>مبلغ</th><th>شرح</th></tr></thead><tbody id="cashTable"></tbody></table></div></div>
     </section>`);
@@ -38,7 +38,7 @@ function initializeOperationsPages() {
     <section id="ledgerPage" class="page hidden">
       <div class="page-heading"><div><span class="eyebrow">حسابداری طرف‌حساب</span><h2>گردش حساب</h2></div><button id="refreshLedger" class="secondary">به‌روزرسانی</button></div>
       <div class="panel form-grid"><label>طرف‌حساب<select id="ledgerPartySelect"><option value="">انتخاب طرف‌حساب</option></select></label><label>از تاریخ<input id="ledgerFrom" type="date"></label><label>تا تاریخ<input id="ledgerTo" type="date"></label></div>
-      <div class="report-metrics"><div class="metric-card"><span>مانده ابتدای بازه</span><strong id="ledgerOpening">${money(0)}</strong></div><div class="metric-card"><span>جمع بدهکار</span><strong id="ledgerDebit">${money(0)}</strong></div><div class="metric-card"><span>جمع بستانکار</span><strong id="ledgerCredit">${money(0)}</strong></div><div class="metric-card"><span>مانده پایان بازه</span><strong id="ledgerBalance">${money(0)}</strong></div></div>
+      <div class="report-metrics"><div class="metric-card"><span>مانده ابتدای بازه</span><strong id="ledgerOpening">${renderer.money(0)}</strong></div><div class="metric-card"><span>جمع بدهکار</span><strong id="ledgerDebit">${renderer.money(0)}</strong></div><div class="metric-card"><span>جمع بستانکار</span><strong id="ledgerCredit">${renderer.money(0)}</strong></div><div class="metric-card"><span>مانده پایان بازه</span><strong id="ledgerBalance">${renderer.money(0)}</strong></div></div>
       <div id="ledgerError" class="form-error hidden"></div><div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>تاریخ</th><th>نوع</th><th>شرح</th><th>بدهکار</th><th>بستانکار</th><th>مانده</th></tr></thead><tbody id="ledgerTable"><tr class="empty-row"><td colspan="6">طرف‌حسابی انتخاب نشده است.</td></tr></tbody></table></div></div>
     </section>
     <section id="inventoryPage" class="page hidden">
@@ -59,7 +59,7 @@ function initializeOperationsPages() {
       <div class="report-actions"><button id="plExportCsv" class="secondary" type="button">خروجی Excel</button><button id="plExportPdf" class="secondary" type="button">خروجی PDF</button></div>
       <div class="page-heading"><div><span class="eyebrow">گزارش مالی</span><h2>سود و زیان و بستن حساب روزانه</h2></div><button id="refreshProfitLoss" class="secondary">به‌روزرسانی</button></div>
       <div class="panel form-grid"><label>از تاریخ<input id="profitLossFrom" type="date"></label><label>تا تاریخ<input id="profitLossTo" type="date"></label><button id="applyProfitLoss" class="primary">اعمال</button></div>
-      <div class="report-metrics"><div class="metric-card"><span>فروش خالص</span><strong id="plNetSales">${money(0)}</strong></div><div class="metric-card"><span>بهای تمام‌شده</span><strong id="plCost">${money(0)}</strong></div><div class="metric-card"><span>سود ناخالص</span><strong id="plGross">${money(0)}</strong></div><div class="metric-card"><span>سود خالص</span><strong id="plNet">${money(0)}</strong></div></div>
+      <div class="report-metrics"><div class="metric-card"><span>فروش خالص</span><strong id="plNetSales">${renderer.money(0)}</strong></div><div class="metric-card"><span>بهای تمام‌شده</span><strong id="plCost">${renderer.money(0)}</strong></div><div class="metric-card"><span>سود ناخالص</span><strong id="plGross">${renderer.money(0)}</strong></div><div class="metric-card"><span>سود خالص</span><strong id="plNet">${renderer.money(0)}</strong></div></div>
       <div class="panel form-grid"><label>تاریخ بستن روز<input id="closeDate" type="date"></label><label class="full-field">یادداشت<input id="closeNotes"></label><button id="closeDayButton" class="primary">بستن حساب روز</button></div>
       <div id="profitLossError" class="form-error hidden"></div><div class="panel table-panel"><div class="panel-heading"><h3>جزئیات روزانه</h3></div><div class="table-wrap"><table><thead><tr><th>تاریخ</th><th>فروش خالص</th><th>بهای تمام‌شده</th><th>سود ناخالص</th><th>درآمد متفرقه</th><th>هزینه</th><th>سود خالص</th></tr></thead><tbody id="profitLossTable"></tbody></table></div></div>
       <div class="panel table-panel" style="margin-top:16px"><div class="panel-heading"><h3>همه روزهای بسته‌شده</h3><small>این فهرست مستقل از بازه گزارش سود و زیان است.</small></div><div class="table-wrap"><table><thead><tr><th>تاریخ</th><th>موجودی آغازین</th><th>دریافت</th><th>پرداخت</th><th>موجودی پایانی</th><th>کاربر</th></tr></thead><tbody id="closuresTable"></tbody></table></div></div>
@@ -89,106 +89,106 @@ document.querySelector('footer')?.insertAdjacentHTML('beforebegin', `
 let operationsInitialized = false;
 async function loadReturnsPage() {
   initializeOperationsPages();
-  const select = $('#returnSaleSelect');
+  const select = renderer.$('#returnSaleSelect');
   const sales = await window.api.sales.list({ status: 'active' });
-  select.innerHTML = '<option value="">انتخاب فاکتور</option>' + sales.map((s) => `<option value="${s.id}">${esc(s.invoiceNumber)} · ${s.source === 'daily' ? 'فروش روزانه' : esc(s.partyName || 'بدون طرف‌حساب')} · ${money(s.total)}</option>`).join('');
+  select.innerHTML = '<option value="">انتخاب فاکتور</option>' + sales.map((s) => `<option value="${s.id}">${renderer.esc(s.invoiceNumber)} · ${s.source === 'daily' ? 'فروش روزانه' : renderer.esc(s.partyName || 'بدون طرف‌حساب')} · ${renderer.money(s.total)}</option>`).join('');
   const renderSale = async () => {
     const saleId = Number(select.value);
-    const body = $('#returnItemsTable');
+    const body = renderer.$('#returnItemsTable');
     if (!saleId) { body.innerHTML = '<tr class="empty-row"><td colspan="4">ابتدا فاکتور را انتخاب کنید.</td></tr>'; return; }
     const invoice = await window.api.invoices.details('sale', saleId);
-    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small><input type="hidden" class="return-sale-item" value="${item.id}"></td><td>${item.quantity}</td><td><input class="return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
+    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${renderer.esc(item.productName)}</strong><small>${renderer.esc(item.productCode || '')}</small><input type="hidden" class="return-sale-item" value="${item.id}"></td><td>${item.quantity}</td><td><input class="return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${renderer.money(item.total)}</td></tr>`).join('');
   };
-  select.onchange = () => renderSale().catch((e) => showToast(e.message, true));
-  $('#refreshReturns').onclick = () => loadReturnsPage().catch((e) => showToast(e.message, true));
-  $('#saveReturn').onclick = async () => {
-    const error = $('#returnError'); error.classList.add('hidden');
+  select.onchange = () => renderSale().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#refreshReturns').onclick = () => loadReturnsPage().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#saveReturn').onclick = async () => {
+    const error = renderer.$('#returnError'); error.classList.add('hidden');
     try {
       const items = [...document.querySelectorAll('.return-quantity')].map((input) => ({ saleItemId: Number(input.dataset.itemId), quantity: Number(input.value || 0) })).filter((item) => item.quantity > 0);
       if (!select.value || !items.length) throw new Error('فاکتور و حداقل یک قلم مرجوعی را انتخاب کنید.');
-      const result = await window.api.returns.sale.create({ saleId: Number(select.value), items, refundAmount: parsePriceInput($('#returnRefund').value), method: $('#returnMethod').value, reason: $('#returnReason').value, date: new Date().toISOString().slice(0, 10) });
-      showToast(`مرجوعی ${result.return_number} ثبت شد.`); $('#returnRefund').value = '0'; $('#returnReason').value = ''; await loadReturnsPage();
-    } catch (e) { error.textContent = readableError(e, 'ثبت مرجوعی ناموفق بود.'); error.classList.remove('hidden'); }
+      const result = await window.api.returns.sale.create({ saleId: Number(select.value), items, refundAmount: renderer.parsePriceInput(renderer.$('#returnRefund').value), method: renderer.$('#returnMethod').value, reason: renderer.$('#returnReason').value, date: new Date().toISOString().slice(0, 10) });
+      renderer.showToast(`مرجوعی ${result.return_number} ثبت شد.`); renderer.$('#returnRefund').value = '0'; renderer.$('#returnReason').value = ''; await loadReturnsPage();
+    } catch (e) { error.textContent = renderer.readableError(e, 'ثبت مرجوعی ناموفق بود.'); error.classList.remove('hidden'); }
   };
   const history = await window.api.returns.sale.list({});
-  $('#returnsHistory').innerHTML = history.length ? history.map((r) => `<tr><td>${esc(r.returnNumber)}</td><td>${esc(r.saleInvoiceNumber)}</td><td>${isoToJalali(r.date)}</td><td>${money(r.total)}</td><td>${money(r.refundAmount)}</td><td>${r.status === 'cancelled' ? 'لغوشده' : 'تکمیل‌شده'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">مرجوعی ثبت نشده است.</td></tr>';
+  renderer.$('#returnsHistory').innerHTML = history.length ? history.map((r) => `<tr><td>${renderer.esc(r.returnNumber)}</td><td>${renderer.esc(r.saleInvoiceNumber)}</td><td>${renderer.isoToJalali(r.date)}</td><td>${renderer.money(r.total)}</td><td>${renderer.money(r.refundAmount)}</td><td>${r.status === 'cancelled' ? 'لغوشده' : 'تکمیل‌شده'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">مرجوعی ثبت نشده است.</td></tr>';
 
-  const purchaseSelect = $('#purchaseReturnSelect');
+  const purchaseSelect = renderer.$('#purchaseReturnSelect');
   const purchases = await window.api.purchases.list({ status: 'completed' });
-  purchaseSelect.innerHTML = '<option value="">انتخاب فاکتور خرید</option>' + purchases.map((p) => `<option value="${p.id}">${esc(p.invoiceNumber)} · ${esc(p.partyName || 'بدون تأمین‌کننده')} · ${money(p.total)}</option>`).join('');
+  purchaseSelect.innerHTML = '<option value="">انتخاب فاکتور خرید</option>' + purchases.map((p) => `<option value="${p.id}">${renderer.esc(p.invoiceNumber)} · ${renderer.esc(p.partyName || 'بدون تأمین‌کننده')} · ${renderer.money(p.total)}</option>`).join('');
   const renderPurchase = async () => {
     const purchaseId = Number(purchaseSelect.value);
-    const body = $('#purchaseReturnItemsTable');
+    const body = renderer.$('#purchaseReturnItemsTable');
     if (!purchaseId) { body.innerHTML = '<tr class="empty-row"><td colspan="4">ابتدا فاکتور خرید را انتخاب کنید.</td></tr>'; return; }
     const invoice = await window.api.invoices.details('purchase', purchaseId);
-    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${esc(item.productName)}</strong><small>${esc(item.productCode || '')}</small></td><td>${item.quantity}</td><td><input class="purchase-return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${money(item.total)}</td></tr>`).join('');
+    body.innerHTML = invoice.items.map((item) => `<tr><td><strong>${renderer.esc(item.productName)}</strong><small>${renderer.esc(item.productCode || '')}</small></td><td>${item.quantity}</td><td><input class="purchase-return-quantity" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="1" value="0"></td><td>${renderer.money(item.total)}</td></tr>`).join('');
   };
-  purchaseSelect.onchange = () => renderPurchase().catch((e) => showToast(e.message, true));
-  $('#savePurchaseReturn').onclick = async () => {
-    const error = $('#purchaseReturnError'); error.classList.add('hidden');
+  purchaseSelect.onchange = () => renderPurchase().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#savePurchaseReturn').onclick = async () => {
+    const error = renderer.$('#purchaseReturnError'); error.classList.add('hidden');
     try {
       const items = [...document.querySelectorAll('.purchase-return-quantity')].map((input) => ({ purchaseItemId: Number(input.dataset.itemId), quantity: Number(input.value || 0) })).filter((item) => item.quantity > 0);
       if (!purchaseSelect.value || !items.length) throw new Error('فاکتور خرید و حداقل یک قلم مرجوعی را انتخاب کنید.');
-      const result = await window.api.returns.purchase.create({ purchaseId: Number(purchaseSelect.value), items, refundAmount: parsePriceInput($('#purchaseReturnRefund').value), method: $('#purchaseReturnMethod').value, reason: $('#purchaseReturnReason').value, date: new Date().toISOString().slice(0, 10) });
-      showToast(`مرجوعی خرید ${result.return_number} ثبت شد.`); $('#purchaseReturnRefund').value = '0'; $('#purchaseReturnReason').value = ''; await loadReturnsPage();
-    } catch (e) { error.textContent = readableError(e, 'ثبت مرجوعی خرید ناموفق بود.'); error.classList.remove('hidden'); }
+      const result = await window.api.returns.purchase.create({ purchaseId: Number(purchaseSelect.value), items, refundAmount: renderer.parsePriceInput(renderer.$('#purchaseReturnRefund').value), method: renderer.$('#purchaseReturnMethod').value, reason: renderer.$('#purchaseReturnReason').value, date: new Date().toISOString().slice(0, 10) });
+      renderer.showToast(`مرجوعی خرید ${result.return_number} ثبت شد.`); renderer.$('#purchaseReturnRefund').value = '0'; renderer.$('#purchaseReturnReason').value = ''; await loadReturnsPage();
+    } catch (e) { error.textContent = renderer.readableError(e, 'ثبت مرجوعی خرید ناموفق بود.'); error.classList.remove('hidden'); }
   };
   const purchaseHistory = await window.api.returns.purchase.list({});
-  $('#purchaseReturnsHistory').innerHTML = purchaseHistory.length ? purchaseHistory.map((r) => `<tr><td>${esc(r.returnNumber)}</td><td>${esc(r.purchaseInvoiceNumber)}</td><td>${isoToJalali(r.date)}</td><td>${money(r.total)}</td><td>${money(r.refundAmount)}</td><td>${r.status === 'cancelled' ? 'لغوشده' : 'تکمیل‌شده'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">مرجوعی خرید ثبت نشده است.</td></tr>';
+  renderer.$('#purchaseReturnsHistory').innerHTML = purchaseHistory.length ? purchaseHistory.map((r) => `<tr><td>${renderer.esc(r.returnNumber)}</td><td>${renderer.esc(r.purchaseInvoiceNumber)}</td><td>${renderer.isoToJalali(r.date)}</td><td>${renderer.money(r.total)}</td><td>${renderer.money(r.refundAmount)}</td><td>${r.status === 'cancelled' ? 'لغوشده' : 'تکمیل‌شده'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">مرجوعی خرید ثبت نشده است.</td></tr>';
 }
 
 async function loadCashPage() {
   initializeOperationsPages();
   const summary = await window.api.cash.summary({});
-  $('#cashIncome').textContent = money(summary.income); $('#cashExpense').textContent = money(summary.expense); $('#cashBalance').textContent = money(summary.balance);
+  renderer.$('#cashIncome').textContent = renderer.money(summary.income); renderer.$('#cashExpense').textContent = renderer.money(summary.expense); renderer.$('#cashBalance').textContent = renderer.money(summary.balance);
   const rows = await window.api.cash.list({});
-  $('#cashTable').innerHTML = rows.length ? rows.map((r) => `<tr><td>${isoToJalali(r.date)}</td><td>${r.type === 'income' ? 'دریافت' : 'هزینه'}</td><td>${esc(r.category)}</td><td>${esc(r.method)}</td><td>${money(r.amount)}</td><td>${esc(r.description || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">تراکنشی ثبت نشده است.</td></tr>';
-  $('#refreshCash').onclick = () => loadCashPage().catch((e) => showToast(e.message, true));
-  const form = $('#cashForm');
+  renderer.$('#cashTable').innerHTML = rows.length ? rows.map((r) => `<tr><td>${renderer.isoToJalali(r.date)}</td><td>${r.type === 'income' ? 'دریافت' : 'هزینه'}</td><td>${renderer.esc(r.category)}</td><td>${renderer.esc(r.method)}</td><td>${renderer.money(r.amount)}</td><td>${renderer.esc(r.description || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">تراکنشی ثبت نشده است.</td></tr>';
+  renderer.$('#refreshCash').onclick = () => loadCashPage().catch((e) => renderer.showToast(e.message, true));
+  const form = renderer.$('#cashForm');
   if (!form.dataset.bound) {
     form.dataset.bound = '1';
     form.addEventListener('submit', async (event) => {
-      event.preventDefault(); const error = $('#cashError'); error.classList.add('hidden');
-      try { await window.api.cash.create({ type: $('#cashType').value, category: $('#cashCategory').value, method: $('#cashMethod').value, amount: parsePriceInput($('#cashAmount').value), description: $('#cashDescription').value, date: new Date().toISOString().slice(0, 10) }); form.reset(); $('#cashCategory').value = 'general'; showToast('تراکنش صندوق ثبت شد.'); await loadCashPage(); }
-      catch (e) { error.textContent = readableError(e, 'ثبت تراکنش ناموفق بود.'); error.classList.remove('hidden'); }
+      event.preventDefault(); const error = renderer.$('#cashError'); error.classList.add('hidden');
+      try { await window.api.cash.create({ type: renderer.$('#cashType').value, category: renderer.$('#cashCategory').value, method: renderer.$('#cashMethod').value, amount: renderer.parsePriceInput(renderer.$('#cashAmount').value), description: renderer.$('#cashDescription').value, date: new Date().toISOString().slice(0, 10) }); form.reset(); renderer.$('#cashCategory').value = 'general'; renderer.showToast('تراکنش صندوق ثبت شد.'); await loadCashPage(); }
+      catch (e) { error.textContent = renderer.readableError(e, 'ثبت تراکنش ناموفق بود.'); error.classList.remove('hidden'); }
     });
   }
 }
 
 async function loadLedgerPage() {
   initializeOperationsPages();
-  const select = $('#ledgerPartySelect');
+  const select = renderer.$('#ledgerPartySelect');
   const parties = await window.api.customers.list({ query: '', type: '', includeInactive: false });
   const selected = select.value;
-  select.innerHTML = '<option value="">انتخاب طرف‌حساب</option>' + parties.map((p) => `<option value="${p.id}">${esc(p.name)} · ${esc(p.code)} · مانده ${money(p.balance)}</option>`).join('');
+  select.innerHTML = '<option value="">انتخاب طرف‌حساب</option>' + parties.map((p) => `<option value="${p.id}">${renderer.esc(p.name)} · ${renderer.esc(p.code)} · مانده ${renderer.money(p.balance)}</option>`).join('');
   if (selected) select.value = selected;
   const render = async () => {
-    const error = $('#ledgerError'); error.classList.add('hidden');
-    const body = $('#ledgerTable');
+    const error = renderer.$('#ledgerError'); error.classList.add('hidden');
+    const body = renderer.$('#ledgerTable');
     if (!select.value) {
-      $('#ledgerOpening').textContent = money(0); $('#ledgerDebit').textContent = money(0); $('#ledgerCredit').textContent = money(0); $('#ledgerBalance').textContent = money(0);
+      renderer.$('#ledgerOpening').textContent = renderer.money(0); renderer.$('#ledgerDebit').textContent = renderer.money(0); renderer.$('#ledgerCredit').textContent = renderer.money(0); renderer.$('#ledgerBalance').textContent = renderer.money(0);
       body.innerHTML = '<tr class="empty-row"><td colspan="6">طرف‌حسابی انتخاب نشده است.</td></tr>'; return;
     }
     try {
       const data = await window.api.customers.ledger(Number(select.value), {
-        from: jalaliInputToIso($('#ledgerFrom').value || ''), to: jalaliInputToIso($('#ledgerTo').value || '')
+        from: renderer.jalaliInputToIso(renderer.$('#ledgerFrom').value || ''), to: renderer.jalaliInputToIso(renderer.$('#ledgerTo').value || '')
       });
-      $('#ledgerOpening').textContent = money(data.openingBalance); $('#ledgerDebit').textContent = money(data.debit); $('#ledgerCredit').textContent = money(data.credit); $('#ledgerBalance').textContent = money(data.closingBalance);
+      renderer.$('#ledgerOpening').textContent = renderer.money(data.openingBalance); renderer.$('#ledgerDebit').textContent = renderer.money(data.debit); renderer.$('#ledgerCredit').textContent = renderer.money(data.credit); renderer.$('#ledgerBalance').textContent = renderer.money(data.closingBalance);
       const labels = { sale: 'فروش', purchase: 'خرید', payment: 'پرداخت', sale_return: 'مرجوعی فروش', purchase_return: 'مرجوعی خرید' };
-      body.innerHTML = data.events.length ? data.events.map((e) => `<tr><td>${isoToJalali(e.date)}</td><td>${labels[e.kind] || esc(e.kind)}</td><td>${esc(e.description)}<small>${esc(e.reference || '')}</small></td><td>${e.debit ? money(e.debit) : '—'}</td><td>${e.credit ? money(e.credit) : '—'}</td><td class="${e.balance < 0 ? 'profit-amount' : e.balance > 0 ? 'debt-amount' : ''}">${money(e.balance)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">گردشی برای این بازه وجود ندارد.</td></tr>';
-    } catch (e) { error.textContent = readableError(e, 'دریافت گردش حساب ناموفق بود.'); error.classList.remove('hidden'); }
+      body.innerHTML = data.events.length ? data.events.map((e) => `<tr><td>${renderer.isoToJalali(e.date)}</td><td>${labels[e.kind] || renderer.esc(e.kind)}</td><td>${renderer.esc(e.description)}<small>${renderer.esc(e.reference || '')}</small></td><td>${e.debit ? renderer.money(e.debit) : '—'}</td><td>${e.credit ? renderer.money(e.credit) : '—'}</td><td class="${e.balance < 0 ? 'profit-amount' : e.balance > 0 ? 'debt-amount' : ''}">${renderer.money(e.balance)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">گردشی برای این بازه وجود ندارد.</td></tr>';
+    } catch (e) { error.textContent = renderer.readableError(e, 'دریافت گردش حساب ناموفق بود.'); error.classList.remove('hidden'); }
   };
-  select.onchange = render; $('#ledgerFrom').onchange = render; $('#ledgerTo').onchange = render;
-  $('#refreshLedger').onclick = () => loadLedgerPage().catch((e) => showToast(e.message, true));
+  select.onchange = render; renderer.$('#ledgerFrom').onchange = render; renderer.$('#ledgerTo').onchange = render;
+  renderer.$('#refreshLedger').onclick = () => loadLedgerPage().catch((e) => renderer.showToast(e.message, true));
   await render();
 }
 
 async function loadInventoryPage() {
   initializeOperationsPages();
   const products = await window.api.products.list({ query: '' });
-  const select = $('#inventoryProductSelect');
-  const searchInput = $('#inventoryProductSearch');
-  const suggestions = $('#inventoryProductSuggestions');
+  const select = renderer.$('#inventoryProductSelect');
+  const searchInput = renderer.$('#inventoryProductSearch');
+  const suggestions = renderer.$('#inventoryProductSuggestions');
   const selected = select.value;
   const findMatches = (query = '') => {
     const normalized = String(query).trim().toLocaleLowerCase();
@@ -202,7 +202,7 @@ async function loadInventoryPage() {
       suggestions.classList.remove('hidden');
       return;
     }
-    suggestions.innerHTML = matches.map((p) => `<button type="button" class="inventory-product-suggestion" data-id="${p.id}"><span><strong>${esc(p.name)}</strong><small>${esc(p.code)}${p.barcode ? ` · ${esc(p.barcode)}` : ''} · موجودی ${p.stock}</small></span><b>${p.stock}</b></button>`).join('');
+    suggestions.innerHTML = matches.map((p) => `<button type="button" class="inventory-product-suggestion" data-id="${p.id}"><span><strong>${renderer.esc(p.name)}</strong><small>${renderer.esc(p.code)}${p.barcode ? ` · ${renderer.esc(p.barcode)}` : ''} · موجودی ${p.stock}</small></span><b>${p.stock}</b></button>`).join('');
     suggestions.classList.remove('hidden');
   };
   const selectedProduct = products.find((p) => String(p.id) === String(selected));
@@ -235,111 +235,111 @@ async function loadInventoryPage() {
     searchInput.value = `${product.name} · ${product.code}`;
     suggestions.classList.add('hidden');
   };
-  $('#inventoryProductsTable').innerHTML = products.length ? products.map((p) => `<tr><td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${p.stock}</td><td>${p.minimumStock}</td><td>${Number(p.stock) <= Number(p.minimumStock) ? '<span class="status-badge warning">کم</span>' : '<span class="status-badge active">عادی</span>'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">کالایی وجود ندارد.</td></tr>';
+  renderer.$('#inventoryProductsTable').innerHTML = products.length ? products.map((p) => `<tr><td>${renderer.esc(p.code)}</td><td>${renderer.esc(p.name)}</td><td>${p.stock}</td><td>${p.minimumStock}</td><td>${Number(p.stock) <= Number(p.minimumStock) ? '<span class="status-badge warning">کم</span>' : '<span class="status-badge active">عادی</span>'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">کالایی وجود ندارد.</td></tr>';
   const movements = await window.api.inventory.movements({});
   const typeLabels = { sale: 'فروش', purchase: 'خرید', sale_return: 'مرجوعی فروش', purchase_return: 'مرجوعی خرید', adjustment: 'اصلاح', sale_cancel: 'لغو فروش', purchase_cancel: 'لغو خرید' };
-  $('#inventoryMovementsTable').innerHTML = movements.length ? movements.slice(0, 100).map((m) => `<tr><td>${isoToJalali(String(m.createdAt).slice(0, 10))}</td><td>${esc(m.productName)}</td><td>${typeLabels[m.type] || esc(m.type)}</td><td class="${Number(m.quantity) < 0 ? 'loss-amount' : 'profit-amount'}">${m.quantity}</td><td>${esc(m.description || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">گردش موجودی ثبت نشده است.</td></tr>';
-  $('#refreshInventory').onclick = () => loadInventoryPage().catch((e) => showToast(e.message, true));
-  const form = $('#inventoryAdjustForm');
+  renderer.$('#inventoryMovementsTable').innerHTML = movements.length ? movements.slice(0, 100).map((m) => `<tr><td>${renderer.isoToJalali(String(m.createdAt).slice(0, 10))}</td><td>${renderer.esc(m.productName)}</td><td>${typeLabels[m.type] || renderer.esc(m.type)}</td><td class="${Number(m.quantity) < 0 ? 'loss-amount' : 'profit-amount'}">${m.quantity}</td><td>${renderer.esc(m.description || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">گردش موجودی ثبت نشده است.</td></tr>';
+  renderer.$('#refreshInventory').onclick = () => loadInventoryPage().catch((e) => renderer.showToast(e.message, true));
+  const form = renderer.$('#inventoryAdjustForm');
   if (!form.dataset.bound) {
     form.dataset.bound = '1';
     form.addEventListener('submit', async (event) => {
-      event.preventDefault(); const error = $('#inventoryError'); error.classList.add('hidden');
+      event.preventDefault(); const error = renderer.$('#inventoryError'); error.classList.add('hidden');
       try {
         if (!select.value) throw new Error('یک کالا انتخاب کنید.');
-        await window.api.inventory.adjust(Number(select.value), { stock: Number($('#inventoryCountedStock').value), reason: $('#inventoryAdjustmentReason').value });
-        showToast('اصلاح موجودی ثبت شد.'); $('#inventoryAdjustmentReason').value = ''; await loadInventoryPage();
-      } catch (e) { error.textContent = readableError(e, 'اصلاح موجودی ناموفق بود.'); error.classList.remove('hidden'); }
+        await window.api.inventory.adjust(Number(select.value), { stock: Number(renderer.$('#inventoryCountedStock').value), reason: renderer.$('#inventoryAdjustmentReason').value });
+        renderer.showToast('اصلاح موجودی ثبت شد.'); renderer.$('#inventoryAdjustmentReason').value = ''; await loadInventoryPage();
+      } catch (e) { error.textContent = renderer.readableError(e, 'اصلاح موجودی ناموفق بود.'); error.classList.remove('hidden'); }
     });
   }
 }
 
 async function loadUsersPage() {
   initializeOperationsPages();
-  const error = $('#usersError'); error.classList.add('hidden');
+  const error = renderer.$('#usersError'); error.classList.add('hidden');
   try {
     const users = await window.api.users.list();
     const roleLabels = { admin: 'مدیر سیستم', manager: 'مدیر اجرایی', cashier: 'صندوقدار', warehouse: 'انباردار', viewer: 'فقط‌خواندنی' };
-    $('#usersTable').innerHTML = users.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName)}</td><td>${roleLabels[u.role] || u.role}</td><td>${u.isActive ? '<span class="status-badge active">فعال</span>' : '<span class="status-badge inactive">غیرفعال</span>'}</td><td>${esc(dateTimeToJalali(u.lastLoginAt))}</td><td><button class="table-action toggle-user" data-id="${u.id}" data-active="${u.isActive ? 1 : 0}">${u.isActive ? 'غیرفعال‌سازی' : 'فعال‌سازی'}</button></td></tr>`).join('');
+    renderer.$('#usersTable').innerHTML = users.map((u) => `<tr><td>${renderer.esc(u.username)}</td><td>${renderer.esc(u.displayName)}</td><td>${roleLabels[u.role] || u.role}</td><td>${u.isActive ? '<span class="status-badge active">فعال</span>' : '<span class="status-badge inactive">غیرفعال</span>'}</td><td>${renderer.esc(renderer.dateTimeToJalali(u.lastLoginAt))}</td><td><button class="table-action toggle-user" data-id="${u.id}" data-active="${u.isActive ? 1 : 0}">${u.isActive ? 'غیرفعال‌سازی' : 'فعال‌سازی'}</button></td></tr>`).join('');
     const logs = await window.api.audit.list({});
-    $('#auditTable').innerHTML = logs.length ? logs.map((log) => `<tr><td>${esc(dateTimeToJalali(log.createdAt))}</td><td>${esc(log.userName)}</td><td>${esc(log.action)}</td><td>${esc(log.entityType || '—')} ${log.entityId || ''}</td><td>${esc(log.details || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">لاگی ثبت نشده است.</td></tr>';
-  } catch (e) { error.textContent = readableError(e, 'دریافت کاربران یا لاگ ناموفق بود.'); error.classList.remove('hidden'); }
-  $('#refreshUsers').onclick = () => loadUsersPage().catch((e) => showToast(e.message, true));
-  const form = $('#userForm');
+    renderer.$('#auditTable').innerHTML = logs.length ? logs.map((log) => `<tr><td>${renderer.esc(renderer.dateTimeToJalali(log.createdAt))}</td><td>${renderer.esc(log.userName)}</td><td>${renderer.esc(log.action)}</td><td>${renderer.esc(log.entityType || '—')} ${log.entityId || ''}</td><td>${renderer.esc(log.details || '—')}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">لاگی ثبت نشده است.</td></tr>';
+  } catch (e) { error.textContent = renderer.readableError(e, 'دریافت کاربران یا لاگ ناموفق بود.'); error.classList.remove('hidden'); }
+  renderer.$('#refreshUsers').onclick = () => loadUsersPage().catch((e) => renderer.showToast(e.message, true));
+  const form = renderer.$('#userForm');
   if (!form.dataset.bound) {
     form.dataset.bound = '1';
     form.addEventListener('submit', async (event) => {
       event.preventDefault(); error.classList.add('hidden');
       try {
-        await window.api.users.create({ username: $('#newUsername').value, displayName: $('#newDisplayName').value, password: $('#newPassword').value, role: $('#newRole').value });
-        form.reset(); showToast('کاربر ایجاد شد.'); await loadUsersPage();
-      } catch (e) { error.textContent = readableError(e, 'ایجاد کاربر ناموفق بود.'); error.classList.remove('hidden'); }
+        await window.api.users.create({ username: renderer.$('#newUsername').value, displayName: renderer.$('#newDisplayName').value, password: renderer.$('#newPassword').value, role: renderer.$('#newRole').value });
+        form.reset(); renderer.showToast('کاربر ایجاد شد.'); await loadUsersPage();
+      } catch (e) { error.textContent = renderer.readableError(e, 'ایجاد کاربر ناموفق بود.'); error.classList.remove('hidden'); }
     });
   }
-  const passwordForm = $('#passwordForm');
+  const passwordForm = renderer.$('#passwordForm');
   if (!passwordForm.dataset.bound) {
     passwordForm.dataset.bound = '1';
     passwordForm.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if ($('#nextPassword').value !== $('#nextPasswordConfirm').value) return showToast('تکرار رمز جدید یکسان نیست.', true);
+      if (renderer.$('#nextPassword').value !== renderer.$('#nextPasswordConfirm').value) return renderer.showToast('تکرار رمز جدید یکسان نیست.', true);
       try {
-        await window.api.auth.changePassword($('#currentPassword').value, $('#nextPassword').value);
-        passwordForm.reset(); showToast('رمز عبور تغییر کرد.');
-      } catch (e) { showToast(readableError(e, 'تغییر رمز عبور ناموفق بود.'), true); }
+        await window.api.auth.changePassword(renderer.$('#currentPassword').value, renderer.$('#nextPassword').value);
+        passwordForm.reset(); renderer.showToast('رمز عبور تغییر کرد.');
+      } catch (e) { renderer.showToast(renderer.readableError(e, 'تغییر رمز عبور ناموفق بود.'), true); }
     });
   }
-  $('#usersTable').onclick = async (event) => {
+  renderer.$('#usersTable').onclick = async (event) => {
     const button = event.target.closest('.toggle-user'); if (!button) return;
-    try { await window.api.users.setActive(Number(button.dataset.id), button.dataset.active !== '1'); await loadUsersPage(); } catch (e) { showToast(e.message, true); }
+    try { await window.api.users.setActive(Number(button.dataset.id), button.dataset.active !== '1'); await loadUsersPage(); } catch (e) { renderer.showToast(e.message, true); }
   };
 }
 
 async function loadChecksPage() {
   initializeOperationsPages();
-  const error = $('#checksError'); error.classList.add('hidden');
+  const error = renderer.$('#checksError'); error.classList.add('hidden');
   try {
     const rows = await window.api.checks.list({
-      status: $('#checkStatusFilter').value,
-      query: $('#checkQuery').value,
-      from: $('#checkFrom').value,
-      to: $('#checkTo').value
+      status: renderer.$('#checkStatusFilter').value,
+      query: renderer.$('#checkQuery').value,
+      from: renderer.$('#checkFrom').value,
+      to: renderer.$('#checkTo').value
     });
     const labels = { pending: 'در انتظار', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'لغوشده' };
-    $('#checksTable').innerHTML = rows.length ? rows.map((r) => `<tr><td>${r.dueDate ? isoToJalali(r.dueDate) : '—'}</td><td>${esc(r.checkNumber || '—')}</td><td>${esc(r.invoiceNumber || '—')}</td><td>${esc(r.partyName || '—')}<small>${r.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${money(r.amount)}</td><td>${esc(r.bankName || '—')}</td><td><span class="status-badge ${r.checkStatus === 'pending' ? 'warning' : r.checkStatus === 'cleared' ? 'active' : 'inactive'}">${labels[r.checkStatus] || r.checkStatus}</span></td><td>${r.checkStatus !== 'cleared' && r.checkStatus !== 'cancelled' ? `<button class="table-action check-status-action" data-id="${r.id}" data-status="cleared">وصول</button>` : ''}${r.checkStatus !== 'bounced' && r.checkStatus !== 'cancelled' ? `<button class="table-action danger check-status-action" data-id="${r.id}" data-status="bounced">برگشتی</button>` : ''}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">چکی برای نمایش وجود ندارد.</td></tr>';
-  } catch (e) { error.textContent = readableError(e, 'دریافت فهرست چک‌ها ناموفق بود.'); error.classList.remove('hidden'); }
-  $('#refreshChecks').onclick = () => loadChecksPage().catch((e) => showToast(e.message, true));
-  $('#applyChecks').onclick = () => loadChecksPage().catch((e) => showToast(e.message, true));
-  $('#checksTable').onclick = async (event) => {
+    renderer.$('#checksTable').innerHTML = rows.length ? rows.map((r) => `<tr><td>${r.dueDate ? renderer.isoToJalali(r.dueDate) : '—'}</td><td>${renderer.esc(r.checkNumber || '—')}</td><td>${renderer.esc(r.invoiceNumber || '—')}</td><td>${renderer.esc(r.partyName || '—')}<small>${r.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${renderer.money(r.amount)}</td><td>${renderer.esc(r.bankName || '—')}</td><td><span class="status-badge ${r.checkStatus === 'pending' ? 'warning' : r.checkStatus === 'cleared' ? 'active' : 'inactive'}">${labels[r.checkStatus] || r.checkStatus}</span></td><td>${r.checkStatus !== 'cleared' && r.checkStatus !== 'cancelled' ? `<button class="table-action check-status-action" data-id="${r.id}" data-status="cleared">وصول</button>` : ''}${r.checkStatus !== 'bounced' && r.checkStatus !== 'cancelled' ? `<button class="table-action danger check-status-action" data-id="${r.id}" data-status="bounced">برگشتی</button>` : ''}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">چکی برای نمایش وجود ندارد.</td></tr>';
+  } catch (e) { error.textContent = renderer.readableError(e, 'دریافت فهرست چک‌ها ناموفق بود.'); error.classList.remove('hidden'); }
+  renderer.$('#refreshChecks').onclick = () => loadChecksPage().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#applyChecks').onclick = () => loadChecksPage().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#checksTable').onclick = async (event) => {
     const button = event.target.closest('.check-status-action'); if (!button) return;
-    try { await window.api.checks.updateStatus(Number(button.dataset.id), button.dataset.status); await loadChecksPage(); showToast('وضعیت چک به‌روزرسانی شد.'); }
-    catch (e) { showToast(readableError(e, 'تغییر وضعیت چک ناموفق بود.'), true); }
+    try { await window.api.checks.updateStatus(Number(button.dataset.id), button.dataset.status); await loadChecksPage(); renderer.showToast('وضعیت چک به‌روزرسانی شد.'); }
+    catch (e) { renderer.showToast(renderer.readableError(e, 'تغییر وضعیت چک ناموفق بود.'), true); }
   };
 }
 
 function ensureInstallmentPaymentDialog() {
-  let backdrop = $('#installmentPaymentBackdrop');
+  let backdrop = renderer.$('#installmentPaymentBackdrop');
   if (backdrop) return backdrop;
   document.body.insertAdjacentHTML('beforeend', `<div id="installmentPaymentBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:420px"><div class="modal-header"><div><span class="eyebrow">دریافت قسط</span><h3>ثبت پرداخت قسط</h3></div><button type="button" class="modal-close installment-payment-close">×</button></div><form id="installmentPaymentForm"><label>مبلغ پرداختی<input id="installmentPaymentAmount" class="money-input" inputmode="decimal" required></label><div id="installmentPaymentError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary installment-payment-close">انصراف</button><button type="submit" class="primary">ثبت پرداخت</button></div></form></div></div>`);
-  backdrop = $('#installmentPaymentBackdrop');
+  backdrop = renderer.$('#installmentPaymentBackdrop');
   backdrop.addEventListener('click', (event) => {
     if (event.target.closest('.installment-payment-close')) backdrop.classList.add('hidden');
   });
-  $('#installmentPaymentForm').addEventListener('submit', async (event) => {
+  renderer.$('#installmentPaymentForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const error = $('#installmentPaymentError');
+    const error = renderer.$('#installmentPaymentError');
     error.classList.add('hidden');
     const installmentId = Number(backdrop.dataset.installmentId);
     try {
-      const amount = parsePriceInput($('#installmentPaymentAmount').value);
+      const amount = renderer.parsePriceInput(renderer.$('#installmentPaymentAmount').value);
       const remaining = Number(backdrop.dataset.remaining || 0);
       if (!installmentId || !amount) throw new Error('مبلغ پرداختی را وارد کنید.');
-      if (amount > remaining) throw new Error(`مبلغ پرداختی نمی‌تواند بیشتر از ${money(remaining)} باشد.`);
+      if (amount > remaining) throw new Error(`مبلغ پرداختی نمی‌تواند بیشتر از ${renderer.money(remaining)} باشد.`);
       await window.api.installments.recordPayment(installmentId, { amount, method: 'cash', paidAt: new Date().toISOString() });
       backdrop.classList.add('hidden');
-      showToast('پرداخت قسط ثبت شد.');
+      renderer.showToast('پرداخت قسط ثبت شد.');
       await loadInstallmentsPage();
     } catch (e) {
-      error.textContent = readableError(e, 'ثبت پرداخت قسط ناموفق بود.');
+      error.textContent = renderer.readableError(e, 'ثبت پرداخت قسط ناموفق بود.');
       error.classList.remove('hidden');
     }
   });
@@ -351,15 +351,15 @@ function openInstallmentPaymentDialog(button) {
   const remaining = Number(button.dataset.remaining || 0);
   backdrop.dataset.installmentId = String(button.dataset.id || '');
   backdrop.dataset.remaining = String(remaining);
-  $('#installmentPaymentAmount').value = formatPriceInput(remaining);
-  $('#installmentPaymentError').classList.add('hidden');
+  renderer.$('#installmentPaymentAmount').value = renderer.formatPriceInput(remaining);
+  renderer.$('#installmentPaymentError').classList.add('hidden');
   backdrop.classList.remove('hidden');
-  requestAnimationFrame(() => { $('#installmentPaymentAmount').focus(); $('#installmentPaymentAmount').select(); });
+  requestAnimationFrame(() => { renderer.$('#installmentPaymentAmount').focus(); renderer.$('#installmentPaymentAmount').select(); });
 }
 
 async function loadInstallmentsPage() {
   initializeOperationsPages();
-  const error = $('#installmentsError'); error.classList.add('hidden');
+  const error = renderer.$('#installmentsError'); error.classList.add('hidden');
   try {
     const [sales, purchases, plans] = await Promise.all([
       window.api.sales.list({ status: 'active' }),
@@ -368,19 +368,19 @@ async function loadInstallmentsPage() {
     ]);
     const invoices = [...sales.filter((i) => Number(i.remainingAmount) > 0).map((i) => ({ ...i, invoiceKind: 'sale', label: `فروش · ${i.invoiceNumber}` })),
       ...purchases.filter((i) => Number(i.remainingAmount) > 0).map((i) => ({ ...i, invoiceKind: 'purchase', label: `خرید · ${i.invoiceNumber}` }))];
-    const select = $('#installmentInvoiceSelect');
+    const select = renderer.$('#installmentInvoiceSelect');
     const previous = select.value;
-    select.innerHTML = '<option value="">انتخاب فاکتور دارای مانده</option>' + invoices.map((i) => `<option value="${i.invoiceKind}:${i.id}">${esc(i.label)} · ${esc(i.partyName || 'بدون طرف‌حساب')} · ${money(i.remainingAmount)}</option>`).join('');
+    select.innerHTML = '<option value="">انتخاب فاکتور دارای مانده</option>' + invoices.map((i) => `<option value="${i.invoiceKind}:${i.id}">${renderer.esc(i.label)} · ${renderer.esc(i.partyName || 'بدون طرف‌حساب')} · ${renderer.money(i.remainingAmount)}</option>`).join('');
     if (previous) select.value = previous;
     const labels = { active: 'فعال', completed: 'تسویه‌شده', cancelled: 'لغوشده', pending: 'در انتظار', partial: 'پرداخت ناقص', paid: 'پرداخت‌شده', overdue: 'معوق' };
-    $('#installmentPlansTable').innerHTML = plans.length ? plans.map((plan) => `<tr><td><strong>${esc(plan.invoiceNumber || '—')}</strong><small>${plan.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${esc(plan.partyName || 'بدون طرف‌حساب')}</td><td>${money(plan.totalAmount)}</td><td><span class="status-badge ${plan.status === 'completed' ? 'active' : 'warning'}">${labels[plan.status] || plan.status}</span></td><td><div class="installment-rows">${plan.installments.map((item) => `<div class="installment-row"><span>${item.installmentNumber}. ${isoToJalali(item.dueDate)}</span><b>${money(item.amount)}</b><small>${money(item.paidAmount)} · ${labels[item.status] || item.status}</small>${item.status !== 'paid' && item.status !== 'cancelled' ? `<button type="button" class="table-action installment-pay" data-id="${item.id}" data-remaining="${Number(item.amount) - Number(item.paidAmount || 0)}">ثبت پرداخت</button>` : ''}</div>`).join('')}</div></td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">برنامه اقساطی ثبت نشده است.</td></tr>';
-    $('#installmentPlanForm').onsubmit = async (event) => {
+    renderer.$('#installmentPlansTable').innerHTML = plans.length ? plans.map((plan) => `<tr><td><strong>${renderer.esc(plan.invoiceNumber || '—')}</strong><small>${plan.invoiceKind === 'sale' ? 'فروش' : 'خرید'}</small></td><td>${renderer.esc(plan.partyName || 'بدون طرف‌حساب')}</td><td>${renderer.money(plan.totalAmount)}</td><td><span class="status-badge ${plan.status === 'completed' ? 'active' : 'warning'}">${labels[plan.status] || plan.status}</span></td><td><div class="installment-rows">${plan.installments.map((item) => `<div class="installment-row"><span>${item.installmentNumber}. ${renderer.isoToJalali(item.dueDate)}</span><b>${renderer.money(item.amount)}</b><small>${renderer.money(item.paidAmount)} · ${labels[item.status] || item.status}</small>${item.status !== 'paid' && item.status !== 'cancelled' ? `<button type="button" class="table-action installment-pay" data-id="${item.id}" data-remaining="${Number(item.amount) - Number(item.paidAmount || 0)}">ثبت پرداخت</button>` : ''}</div>`).join('')}</div></td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">برنامه اقساطی ثبت نشده است.</td></tr>';
+    renderer.$('#installmentPlanForm').onsubmit = async (event) => {
       event.preventDefault(); error.classList.add('hidden');
       try {
         const [kind, idText] = String(select.value).split(':');
         const invoice = invoices.find((item) => item.invoiceKind === kind && item.id === Number(idText));
-        const count = Math.max(1, Math.min(120, Number($('#installmentCount').value || 1)));
-        const firstDue = jalaliInputToIso($('#installmentFirstDue').value);
+        const count = Math.max(1, Math.min(120, Number(renderer.$('#installmentCount').value || 1)));
+        const firstDue = renderer.jalaliInputToIso(renderer.$('#installmentFirstDue').value);
         if (!invoice || !firstDue) throw new Error('فاکتور و تاریخ اولین سررسید را به صورت معتبر وارد کنید.');
         const total = Number(invoice.remainingAmount);
         const base = Math.floor(total / count);
@@ -388,12 +388,12 @@ async function loadInstallmentsPage() {
           const due = new Date(`${firstDue}T00:00:00Z`); due.setUTCMonth(due.getUTCMonth() + index);
           return { dueDate: due.toISOString().slice(0, 10), amount: base + (index < total % count ? 1 : 0) };
         });
-        await window.api.installments.createPlan({ invoiceKind: kind, invoiceId: Number(idText), installments, notes: $('#installmentNotes').value });
-        $('#installmentNotes').value = ''; showToast('برنامه اقساط ایجاد شد.'); await loadInstallmentsPage();
-      } catch (e) { error.textContent = readableError(e, 'ایجاد برنامه اقساط ناموفق بود.'); error.classList.remove('hidden'); }
+        await window.api.installments.createPlan({ invoiceKind: kind, invoiceId: Number(idText), installments, notes: renderer.$('#installmentNotes').value });
+        renderer.$('#installmentNotes').value = ''; renderer.showToast('برنامه اقساط ایجاد شد.'); await loadInstallmentsPage();
+      } catch (e) { error.textContent = renderer.readableError(e, 'ایجاد برنامه اقساط ناموفق بود.'); error.classList.remove('hidden'); }
     };
-    $('#refreshInstallments').onclick = () => loadInstallmentsPage().catch((e) => showToast(e.message, true));
-    $('#installmentPlansTable').onclick = async (event) => {
+    renderer.$('#refreshInstallments').onclick = () => loadInstallmentsPage().catch((e) => renderer.showToast(e.message, true));
+    renderer.$('#installmentPlansTable').onclick = async (event) => {
       const button = event.target.closest('.installment-pay'); if (!button) return;
       event.preventDefault();
       event.stopPropagation();
@@ -401,57 +401,57 @@ async function loadInstallmentsPage() {
       if (!remaining) return;
       openInstallmentPaymentDialog(button);
     };
-  } catch (e) { error.textContent = readableError(e, 'دریافت اطلاعات اقساط ناموفق بود.'); error.classList.remove('hidden'); }
+  } catch (e) { error.textContent = renderer.readableError(e, 'دریافت اطلاعات اقساط ناموفق بود.'); error.classList.remove('hidden'); }
 }
 
 async function loadProfitLossPage() {
   initializeOperationsPages();
   const today = new Date().toISOString().slice(0, 10);
-  const todayJalali = isoToJalali(today);
-  if (!$('#profitLossFrom').value) $('#profitLossFrom').value = todayJalali;
-  if (!$('#profitLossTo').value) $('#profitLossTo').value = todayJalali;
-  if (!$('#closeDate').value) $('#closeDate').value = todayJalali;
-  bindJalaliDatePickers(true);
-  const error = $('#profitLossError'); error.classList.add('hidden');
+  const todayJalali = renderer.isoToJalali(today);
+  if (!renderer.$('#profitLossFrom').value) renderer.$('#profitLossFrom').value = todayJalali;
+  if (!renderer.$('#profitLossTo').value) renderer.$('#profitLossTo').value = todayJalali;
+  if (!renderer.$('#closeDate').value) renderer.$('#closeDate').value = todayJalali;
+  renderer.bindJalaliDatePickers(true);
+  const error = renderer.$('#profitLossError'); error.classList.add('hidden');
   try {
-    const from = jalaliInputToIso($('#profitLossFrom').value);
-    const to = jalaliInputToIso($('#profitLossTo').value);
+    const from = renderer.jalaliInputToIso(renderer.$('#profitLossFrom').value);
+    const to = renderer.jalaliInputToIso(renderer.$('#profitLossTo').value);
     const report = await window.api.profitLoss.report({ from, to });
-    $('#plNetSales').textContent = money(report.netSales); $('#plCost').textContent = money(report.costTotal); $('#plGross').textContent = money(report.grossProfit); $('#plNet').textContent = money(report.netProfit);
-    $('#plNet').classList.toggle('negative', Number(report.netProfit) < 0);
-    $('#profitLossTable').innerHTML = report.byDate.length ? report.byDate.map((r) => `<tr><td>${isoToJalali(r.date)}</td><td>${money(r.netSales)}</td><td>${money(r.costTotal)}</td><td>${money(r.grossProfit)}</td><td>${money(r.otherIncome)}</td><td>${money(r.expenses)}</td><td class="${r.netProfit < 0 ? 'negative' : ''}">${money(r.netProfit)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="7">داده‌ای برای این بازه وجود ندارد.</td></tr>';
+    renderer.$('#plNetSales').textContent = renderer.money(report.netSales); renderer.$('#plCost').textContent = renderer.money(report.costTotal); renderer.$('#plGross').textContent = renderer.money(report.grossProfit); renderer.$('#plNet').textContent = renderer.money(report.netProfit);
+    renderer.$('#plNet').classList.toggle('negative', Number(report.netProfit) < 0);
+    renderer.$('#profitLossTable').innerHTML = report.byDate.length ? report.byDate.map((r) => `<tr><td>${renderer.isoToJalali(r.date)}</td><td>${renderer.money(r.netSales)}</td><td>${renderer.money(r.costTotal)}</td><td>${renderer.money(r.grossProfit)}</td><td>${renderer.money(r.otherIncome)}</td><td>${renderer.money(r.expenses)}</td><td class="${r.netProfit < 0 ? 'negative' : ''}">${renderer.money(r.netProfit)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="7">داده‌ای برای این بازه وجود ندارد.</td></tr>';
     // The report date range defaults to today-to-today and is only intended
     // for the P&L detail table. Closed days are a historical register, so
     // they must not inherit that range or older closures disappear.
     const closures = await window.api.dailyClose.list({});
-    $('#closuresTable').innerHTML = closures.length ? closures.map((r) => `<tr><td>${isoToJalali(r.date)}</td><td>${money(r.openingBalance)}</td><td>${money(r.cashIncome)}</td><td>${money(r.cashExpense)}</td><td>${money(r.closingBalance)}</td><td>${esc(r.userName)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">روزی بسته نشده است.</td></tr>';
-  } catch (e) { error.textContent = readableError(e, 'گزارش سود و زیان ناموفق بود.'); error.classList.remove('hidden'); }
-  $('#applyProfitLoss').onclick = () => loadProfitLossPage().catch((e) => showToast(e.message, true));
-  $('#refreshProfitLoss').onclick = () => loadProfitLossPage().catch((e) => showToast(e.message, true));
-  $('#closeDayButton').onclick = async () => {
+    renderer.$('#closuresTable').innerHTML = closures.length ? closures.map((r) => `<tr><td>${renderer.isoToJalali(r.date)}</td><td>${renderer.money(r.openingBalance)}</td><td>${renderer.money(r.cashIncome)}</td><td>${renderer.money(r.cashExpense)}</td><td>${renderer.money(r.closingBalance)}</td><td>${renderer.esc(r.userName)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="6">روزی بسته نشده است.</td></tr>';
+  } catch (e) { error.textContent = renderer.readableError(e, 'گزارش سود و زیان ناموفق بود.'); error.classList.remove('hidden'); }
+  renderer.$('#applyProfitLoss').onclick = () => loadProfitLossPage().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#refreshProfitLoss').onclick = () => loadProfitLossPage().catch((e) => renderer.showToast(e.message, true));
+  renderer.$('#closeDayButton').onclick = async () => {
     try {
-      await window.api.dailyClose.create({ date: jalaliInputToIso($('#closeDate').value), notes: $('#closeNotes').value });
-      $('#closeNotes').value = ''; showToast('حساب روز بسته شد.'); await loadProfitLossPage();
-    } catch (e) { error.textContent = readableError(e, 'بستن حساب روزانه ناموفق بود.'); error.classList.remove('hidden'); }
+      await window.api.dailyClose.create({ date: renderer.jalaliInputToIso(renderer.$('#closeDate').value), notes: renderer.$('#closeNotes').value });
+      renderer.$('#closeNotes').value = ''; renderer.showToast('حساب روز بسته شد.'); await loadProfitLossPage();
+    } catch (e) { error.textContent = renderer.readableError(e, 'بستن حساب روزانه ناموفق بود.'); error.classList.remove('hidden'); }
   };
-  $('#plExportCsv').onclick = async () => {
+  renderer.$('#plExportCsv').onclick = async () => {
     try {
-      const result = await window.api.reports.exportCsv('profit-loss', { from: $('#profitLossFrom').value, to: $('#profitLossTo').value });
-      if (!result?.canceled) showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
-    } catch (e) { showToast(readableError(e, 'خروجی Excel ناموفق بود.'), true); }
+      const result = await window.api.reports.exportCsv('profit-loss', { from: renderer.$('#profitLossFrom').value, to: renderer.$('#profitLossTo').value });
+      if (!result?.canceled) renderer.showToast(`فایل Excel ذخیره شد: ${result.filePath}`);
+    } catch (e) { renderer.showToast(renderer.readableError(e, 'خروجی Excel ناموفق بود.'), true); }
   };
-  $('#plExportPdf').onclick = async () => {
+  renderer.$('#plExportPdf').onclick = async () => {
     document.body.classList.add('printing-report', 'printing-profit-loss');
     try {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const result = await window.api.reports.exportPdf({ fileName: `سود-و-زیان-${new Date().toISOString().slice(0, 10)}` });
-      if (!result?.canceled) showToast(`فایل PDF ذخیره شد: ${result.filePath}`);
-    } catch (e) { showToast(readableError(e, 'خروجی PDF ناموفق بود.'), true); }
+      if (!result?.canceled) renderer.showToast(`فایل PDF ذخیره شد: ${result.filePath}`);
+    } catch (e) { renderer.showToast(renderer.readableError(e, 'خروجی PDF ناموفق بود.'), true); }
     finally { document.body.classList.remove('printing-report', 'printing-profit-loss'); }
   };
 }
 
-publishRendererBindings(window, {
+registerRendererBindings(renderer, {
   mutable: {
     operationsInitialized: { get: () => operationsInitialized, set: (value) => { operationsInitialized = value; } }
   },

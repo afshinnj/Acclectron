@@ -51,19 +51,16 @@ function getDashboardSummary(payload = {}) {
   const weekStart = new Date(`${today}T00:00:00Z`);
   weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 1) % 7));
   const weekStartIso = weekStart.toISOString().slice(0, 10);
-  const todaySales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS count FROM sales WHERE status = 'active' AND date = ?"
-  ).get(today);
-  const monthSales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND date >= ? AND date <= ?"
-  ).get(jalaliMonth.from, jalaliMonth.to);
+  const todayReport = getSalesReport({ from: today, to: today });
+  const monthReport = getSalesReport({ from: jalaliMonth.from, to: today });
   const yesterday = new Date(`${today}T00:00:00Z`);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const yesterdayIso = yesterday.toISOString().slice(0, 10);
-  const yesterdaySales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE status = 'active' AND date = ?"
-  ).get(yesterdayIso);
-  const inventory = db.prepare('SELECT COALESCE(SUM(stock), 0) AS stock, COUNT(*) AS count FROM products WHERE is_active = 1').get();
+  const yesterdayReport = getSalesReport({ from: yesterdayIso, to: yesterdayIso });
+  const inventory = db.prepare(`SELECT COALESCE(u.symbol, u.name, 'واحد نامشخص') AS unitLabel,
+      COALESCE(SUM(p.stock), 0) AS stock, COUNT(*) AS count
+    FROM products p LEFT JOIN units u ON u.id = p.unit_id WHERE p.is_active = 1
+    GROUP BY p.unit_id, u.symbol, u.name ORDER BY unitLabel`).all();
   const inventoryValue = db.prepare(`
     SELECT COALESCE(SUM(stock * purchase_price), 0) AS purchaseValue,
       COALESCE(SUM(stock * CASE WHEN retail_price > 0 THEN retail_price ELSE sale_price END), 0) AS retailValue
@@ -72,13 +69,7 @@ function getDashboardSummary(payload = {}) {
   const lowStock = db.prepare(
     'SELECT COUNT(*) AS count FROM products WHERE is_active = 1 AND stock <= minimum_stock'
   ).get();
-  const salesTrend = db.prepare(`
-    SELECT s.date, COALESCE(SUM(s.total), 0) AS sales,
-      COALESCE(SUM(s.total - s.tax - s.cost_total), 0) AS profit
-    FROM sales s
-    WHERE s.status = 'active' AND s.date >= ? AND s.date <= ?
-    GROUP BY s.date ORDER BY s.date
-  `).all(weekStartIso, today);
+  const weekReport = getSalesReport({ from: weekStartIso, to: today });
   // Receipts are attributed to the month they were collected, not the
   // invoice month; paid_at is UTC, so it is converted to the local date.
   const paymentBreakdown = db.prepare(`
@@ -86,82 +77,58 @@ function getDashboardSummary(payload = {}) {
     FROM invoice_payments ip
     LEFT JOIN sales s ON s.id = ip.sale_id
     LEFT JOIN purchases p ON p.id = ip.purchase_id
-    WHERE (s.status = 'active' OR p.status = 'completed')
+    WHERE s.status = 'active'
       AND date(ip.paid_at, 'localtime') BETWEEN ? AND ?
     GROUP BY ip.method ORDER BY amount DESC
-  `).all(jalaliMonth.from, jalaliMonth.to);
-  const topProducts = db.prepare(`
-    SELECT p.name, COALESCE(SUM(si.quantity), 0) AS quantity,
-      COALESCE(SUM(si.total), 0) AS netSales
-    FROM sale_items si JOIN sales s ON s.id = si.sale_id
-    JOIN products p ON p.id = si.product_id
-    WHERE s.status = 'active' AND s.date >= ? AND s.date <= ?
-    GROUP BY p.id, p.name ORDER BY quantity DESC, netSales DESC LIMIT 50
-  `).all(jalaliMonth.from, jalaliMonth.to);
-  const categorySales = db.prepare(`
-    SELECT COALESCE(c.name, 'بدون دسته‌بندی') AS categoryName,
-      COALESCE(SUM(si.total), 0) AS netSales,
-      COALESCE(SUM(si.quantity), 0) AS quantity
-    FROM sale_items si
-    JOIN sales s ON s.id = si.sale_id AND s.status = 'active'
-    JOIN products p ON p.id = si.product_id
-    LEFT JOIN categories c ON c.id = p.category_id
-    WHERE s.date >= ? AND s.date <= ?
-    GROUP BY c.id, c.name
-    ORDER BY netSales DESC LIMIT 8
-  `).all(jalaliMonth.from, jalaliMonth.to);
+  `).all(jalaliMonth.from, today);
   const recentSales = db.prepare(`
     SELECT s.id, s.invoice_number AS invoiceNumber, s.date, s.source, s.total,
       s.paid_amount AS paidAmount, s.remaining_amount AS remainingAmount,
       COALESCE(s.party_name, '') AS partyName
     FROM sales s WHERE s.status = 'active'
-    ORDER BY s.date DESC, s.id DESC LIMIT 50
+    ORDER BY s.created_at DESC, s.id DESC LIMIT 50
   `).all();
   const topDebtors = db.prepare(`
-    SELECT partyName, SUM(balance) AS balance FROM (
-      SELECT COALESCE(NULLIF(TRIM(first_name || ' ' || COALESCE(last_name, '')), ''), code) AS partyName, balance
+    SELECT partyName, accountType, SUM(balance) AS balance FROM (
+      SELECT COALESCE(NULLIF(TRIM(first_name || ' ' || COALESCE(last_name, '')), ''), code) AS partyName, 'اشخاص' AS accountType, balance
       FROM parties WHERE is_active = 1 AND balance > 0
       UNION ALL
-      SELECT name AS partyName, balance FROM customers WHERE is_active = 1 AND balance > 0
+      SELECT name AS partyName, 'مشتری' AS accountType, balance FROM customers WHERE is_active = 1 AND balance > 0
       UNION ALL
-      SELECT name AS partyName, balance FROM suppliers WHERE is_active = 1 AND balance > 0
-    ) GROUP BY partyName ORDER BY balance DESC LIMIT 50
+      SELECT name AS partyName, 'تأمین‌کننده' AS accountType, balance FROM suppliers WHERE is_active = 1 AND balance > 0
+    ) GROUP BY partyName, accountType ORDER BY balance DESC LIMIT 50
   `).all();
   const cashMonth = db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense
     FROM cash_transactions WHERE date >= ? AND date <= ?
-  `).get(jalaliMonth.from, jalaliMonth.to);
-  const monthProfit = db.prepare(`
-    SELECT COALESCE(SUM(total - tax - cost_total), 0) AS profit
-    FROM sales WHERE status = 'active' AND date >= ? AND date <= ?
-  `).get(jalaliMonth.from, jalaliMonth.to);
+  `).get(jalaliMonth.from, today);
   const receivables = db.prepare(`
     SELECT COALESCE(SUM(remaining_amount), 0) AS amount
     FROM sales WHERE status = 'active' AND remaining_amount > 0
   `).get();
   return {
-    todaySales: Number(todaySales.total),
-    todayCount: Number(todaySales.count),
-    monthSales: Number(monthSales.total),
-    yesterdaySales: Number(yesterdaySales.total),
-    salesChangePct: Number(yesterdaySales.total) > 0
-      ? Number(((Number(todaySales.total) - Number(yesterdaySales.total)) / Number(yesterdaySales.total) * 100).toFixed(1))
-      : (Number(todaySales.total) > 0 ? 100 : 0),
-    inventory: Number(inventory.stock),
-    productCount: Number(inventory.count),
+    todaySales: Number(todayReport.summary.netSales),
+    todayCount: Number(todayReport.summary.invoiceCount),
+    monthSales: Number(monthReport.summary.netSales),
+    yesterdaySales: Number(yesterdayReport.summary.netSales),
+    salesChangePct: Number(yesterdayReport.summary.netSales) > 0
+      ? Number(((Number(todayReport.summary.netSales) - Number(yesterdayReport.summary.netSales)) / Number(yesterdayReport.summary.netSales) * 100).toFixed(1))
+      : null,
+    inventory: inventory.map((row) => ({ unitLabel: row.unitLabel, stock: Number(row.stock), count: Number(row.count) })),
+    productCount: inventory.reduce((sum, row) => sum + Number(row.count), 0),
     inventoryValue: { purchase: Number(inventoryValue.purchaseValue), retail: Number(inventoryValue.retailValue) },
     lowStock: Number(lowStock.count),
     salesTrendStart: weekStartIso,
     salesTrendEnd: today,
-    salesTrend: salesTrend.map((row) => ({ date: row.date, sales: Number(row.sales), profit: Number(row.profit) })),
+    salesTrend: weekReport.byDate.map((row) => ({ date: row.date, sales: Number(row.netSales), profit: Number(row.profitTotal) })),
     paymentBreakdown: paymentBreakdown.map((row) => ({ method: row.method, amount: Number(row.amount) })),
-    topProducts: topProducts.map((row) => ({ name: row.name, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
-    categorySales: categorySales.map((row) => ({ categoryName: row.categoryName, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
+    topProducts: monthReport.byProduct.map((row) => ({ name: row.name, quantity: Number(row.quantity), netSales: Number(row.netSales) })),
+    categorySales: Object.values(monthReport.byProduct.reduce((groups, row) => { const name = row.categoryName || 'بدون دسته‌بندی'; const entry = groups[name] || (groups[name] = { categoryName: name, quantity: 0, netSales: 0 }); entry.quantity += Number(row.quantity); entry.netSales += Number(row.netSales); return groups; }, {})).sort((a, b) => b.netSales - a.netSales).slice(0, 8),
     recentSales: recentSales.map((row) => ({ ...row, total: Number(row.total), paidAmount: Number(row.paidAmount), remainingAmount: Number(row.remainingAmount) })),
-    topDebtors: topDebtors.map((row) => ({ partyName: row.partyName, balance: Number(row.balance) })),
+    topDebtors: topDebtors.map((row) => ({ partyName: row.partyName, accountType: row.accountType, balance: Number(row.balance) })),
     cashMonth: { income: Number(cashMonth.income), expense: Number(cashMonth.expense) },
-    monthProfit: Number(monthProfit.profit),
+    monthProfit: Number(monthReport.summary.profitTotal),
     receivables: Number(receivables.amount)
   };
 }
@@ -170,7 +137,7 @@ function listNotifications(payload = {}) {
   const db = requireDatabase();
   const today = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.today || ''))
     ? String(payload.today)
-    : new Date().toISOString().slice(0, 10);
+    : localDateIso();
   const daysAhead = Math.max(0, Math.min(30, Number(payload.daysAhead ?? 7)));
   const horizonDate = new Date(`${today}T00:00:00Z`);
   horizonDate.setUTCDate(horizonDate.getUTCDate() + daysAhead);
@@ -526,7 +493,7 @@ function getSalesReport(payload = {}) {
       quantity: 0, netSales: 0, costTotal: 0, profitTotal: 0
     }));
     row.quantity = Number(row.quantity) - returned.quantity;
-    row.netSales = Number(row.netSales) - returned.itemValue;
+    row.netSales = Number(row.netSales) - returned.netValue;
     row.costTotal = Number(row.costTotal) - returned.costValue;
     row.profitTotal = Number(row.profitTotal) - returned.netValue + returned.costValue;
   }

@@ -1,3 +1,7 @@
+param(
+  [string]$OutputRoot = (Join-Path $PSScriptRoot 'dist\Acclectron-portable')
+)
+
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '.')).Path
@@ -7,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($version)) {
   throw 'package.json does not define a version.'
 }
 $electronDir = Join-Path $projectRoot 'node_modules\electron\dist'
-$outputRoot = Join-Path $projectRoot 'dist\Acclectron-portable'
+$outputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $appDir = Join-Path $outputRoot 'resources\app'
 $exePath = Join-Path $outputRoot 'Acclectron.exe'
 $distRoot = Join-Path $projectRoot 'dist'
@@ -30,6 +34,7 @@ $appFiles = @(
   'preload.js',
   'styles.css',
   'package.json',
+  'package-lock.json',
   'assets',
   'src'
 )
@@ -44,10 +49,16 @@ Copy-Item -LiteralPath $releaseNotes -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\Acclectron-User-Manual-fa.pdf') -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\Acclectron-Manual.html') -Destination $outputRoot -Force
 Copy-Item -LiteralPath (Join-Path $electronDir 'electron.exe') -Destination $exePath -Force
-$nodeModulesDir = Join-Path $appDir 'node_modules'
-New-Item -ItemType Directory -Path $nodeModulesDir -Force | Out-Null
-foreach ($module in @('yauzl', 'fd-slicer', 'pend', 'buffer-crc32')) {
-  Copy-Item -LiteralPath (Join-Path $projectRoot "node_modules\$module") -Destination $nodeModulesDir -Recurse -Force
+$npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+Push-Location $appDir
+try {
+  & $npm ci --omit=dev
+  if ($LASTEXITCODE -ne 0) {
+    throw "Installing production dependencies for the portable app failed (exit code $LASTEXITCODE)."
+  }
+}
+finally {
+  Pop-Location
 }
 Get-ChildItem -LiteralPath $electronDir -Force |
   Where-Object { $_.Name -ne 'electron.exe' } |

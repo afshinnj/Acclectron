@@ -90,3 +90,58 @@ test('settings data refresh is declared and registered for the shared renderer A
   assert.match(source, /let refreshSettingsData\s*=/);
   assert.match(source, /refreshSettingsData:\s*\{\s*get:/);
 });
+
+test('management module boots without global bindings and renders usable product IDs', async (t) => {
+  const { renderer } = await import('../src/renderer/shared/runtime.mjs');
+  const previousBindings = Object.getOwnPropertyDescriptors(renderer);
+  const previousDocument = globalThis.document;
+  const previousLocalStorage = globalThis.localStorage;
+  t.after(() => {
+    globalThis.document = previousDocument;
+    globalThis.localStorage = previousLocalStorage;
+    for (const name of Object.keys(renderer)) delete renderer[name];
+    Object.defineProperties(renderer, previousBindings);
+  });
+  const nodes = new Map();
+  globalThis.localStorage = { getItem: () => null };
+  globalThis.document = {
+    querySelector: (selector) => nodes.get(selector) || null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    body: { dataset: {}, insertAdjacentHTML() {} }
+  };
+  Object.assign(renderer, {
+    $: document.querySelector,
+    sessionReady: false,
+    uiCurrency: { inputUnit: 'rial' },
+    currencyFactor: () => renderer.uiCurrency.inputUnit === 'rial' ? 1 : 0.1,
+    currencyLabel: () => 'ریال',
+    money: (amount) => String(amount),
+    normalizeDigits: (value) => String(value)
+  });
+  await import('../src/renderer/features/management.mjs');
+  assert.equal(renderer.parsePriceInput('1200'), 120000);
+  renderer.uiCurrency = { inputUnit: 'toman' };
+  assert.equal(renderer.parsePriceInput('1200'), 1200000);
+
+  const cards = { innerHTML: '' };
+  nodes.set('#saleProductCards', cards);
+  renderer.saleState.products = [{ id: 42, name: '<کالا>', code: 'P42', stock: 3, salePrice: 120000, wholesalePrice: 0 }];
+  renderer.renderSaleProducts();
+  assert.match(cards.innerHTML, /data-id="42"/);
+  assert.match(cards.innerHTML, /&lt;کالا&gt;/);
+  assert.doesNotMatch(cards.innerHTML, /renderer\./);
+
+  const node = () => ({ classList: { add() {}, remove() {} } });
+  nodes.set('#settingsPage', node());
+  nodes.set('#placeholderPage', node());
+  let routedPage;
+  renderer.setPageRouter = (page) => { routedPage = page; };
+  await import('../src/renderer/features/settings-page.mjs');
+  renderer.setManagedPage('reports');
+  assert.equal(routedPage, 'reports');
+  // Later router replacements must remain visible to the settings wrapper.
+  renderer.setPageRouter = (page) => { routedPage = `new:${page}`; };
+  renderer.setManagedPage('settings');
+  assert.equal(routedPage, 'new:settings');
+});

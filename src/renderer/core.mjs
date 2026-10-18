@@ -726,7 +726,6 @@ function renderDashboard(summary) {
   $('#dashboardDebtors').innerHTML = (summary.topDebtors || []).length ? summary.topDebtors.map((row) => `<button class="dashboard-list-row" data-page="ledger"><span><strong>${renderer.esc(row.partyName)}</strong><small>${renderer.esc(row.accountType || '')} · ماندهٔ بدهی</small></span><b class="debt-amount">${money(row.balance)}</b></button>`).join('') : '<div class="empty-state compact">بدهی ثبت‌شده‌ای وجود ندارد.</div>';
   const dashboardTopProducts = [...(summary.topProducts || [])].sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0) || Number(b.netSales || 0) - Number(a.netSales || 0));
   $('#dashboardProducts').innerHTML = dashboardTopProducts.length ? dashboardTopProducts.map((row) => `<button class="dashboard-list-row" data-page="reports"><span><strong>${renderer.esc(row.name)}</strong><small>${new Intl.NumberFormat('fa-IR').format(Number(row.quantity || 0))} عدد فروش</small></span><b>${money(row.netSales)}</b></button>`).join('') : '<div class="empty-state compact">فروشی برای کالاها ثبت نشده است.</div>';
-  document.querySelectorAll('#dashboardPage [data-page]').forEach((node) => { node.onclick = () => renderer.setManagedPage(node.dataset.page); });
   // These chart panels hit guarded channels; before login they are re-run by
   // refreshAfterLogin, so skip the boot copy instead of logging a rejection.
   if (sessionReady) {

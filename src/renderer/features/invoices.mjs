@@ -292,7 +292,7 @@ function bindInvoiceLists() {
         const invoice = await window.api.invoices.details(fullSettle.dataset.kind, Number(fullSettle.dataset.id));
         const amount = Number(invoice.remaining_amount || 0) / 100;
         if (amount <= 0) return;
-        const method = ['cash', 'card', 'check'].includes(renderer.defaultSettlementMethod) ? defaultSettlementMethod : 'cash';
+        const method = ['cash', 'card', 'check'].includes(renderer.defaultSettlementMethod) ? renderer.defaultSettlementMethod : 'cash';
         if (!await renderer.showConfirmDialog({ title: 'تسویه کامل فاکتور', message: `مانده ${renderer.money(invoice.remaining_amount)} با روش ${method === 'card' ? 'کارت' : method === 'check' ? 'چک' : 'نقدی'} تسویه شود؟`, confirmText: 'تسویه فاکتور' })) return;
         await window.api.invoices.settle(fullSettle.dataset.kind, Number(fullSettle.dataset.id), { method, amount });
         renderer.$('#invoiceDetailsBackdrop').classList.add('hidden');

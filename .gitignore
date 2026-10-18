@@ -6,6 +6,7 @@ npm-debug.log*
 # Local runtime data
 *.db
 .db-check/
+.tmp-ui-smoke/
 
 # Local AI model for semantic search (fetch via npm run ai:fetch)
 assets/models/*

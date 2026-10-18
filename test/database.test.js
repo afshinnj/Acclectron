@@ -964,11 +964,13 @@ test('dashboard sales trend only includes the current Saturday-to-today week', (
     const product = db.prepare('SELECT id FROM products LIMIT 1').get();
     createSale({ invoiceNumber: 'S-TREND-PREVIOUS', date: '2026-09-05', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
     createSale({ invoiceNumber: 'S-TREND-CURRENT', date: '2026-09-13', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
+    createSale({ invoiceNumber: 'S-TREND-FUTURE', date: '2026-09-17', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
 
     const summary = getDashboardSummary({ today: '2026-09-16' });
     assert.equal(summary.salesTrendStart, '2026-09-12');
     assert.equal(summary.salesTrendEnd, '2026-09-16');
-    assert.deepEqual(summary.salesTrend.map((row) => row.date), ['2026-09-13']);
+    assert.deepEqual(summary.salesTrend.map((row) => row.date), ['2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16']);
+    assert.deepEqual(summary.salesTrend.map((row) => row.sales), [0, 2000 * 100, 0, 0, 0]);
   } finally {
     closeDatabase();
     fs.rmSync(directory, { recursive: true, force: true });

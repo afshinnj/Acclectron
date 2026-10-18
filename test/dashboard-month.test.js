@@ -26,8 +26,12 @@ test('jalali month range matches the Jalali calendar the UI displays', () => {
   assert.equal(jalaliMonthRangeIso('not-a-date'), null);
 });
 
-test('dashboard monthly windows follow the Jalali month, not the Gregorian month', () => {
+test('dashboard monthly windows follow the Jalali month, not the Gregorian month', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'accletron-month-'));
+  t.after(() => {
+    closeDatabase();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
   getDatabase(directory);
   const admin = getDatabase(directory).prepare("SELECT id FROM users WHERE username = 'admin'").get();
   setCurrentUser(admin.id);
@@ -59,14 +63,16 @@ test('dashboard monthly windows follow the Jalali month, not the Gregorian month
     payments: [{ method: 'cash', amount: 20000, paidAt: '2026-09-20T10:00:00Z' }]
   });
 
-  const summary = getDashboardSummary({ today: '2026-09-23' });
-  // Three Mehr invoices (Mehr 1, 8, 13); the Shahrivar 31 invoice is last month.
+  const firstDay = getDashboardSummary({ today: '2026-09-23' });
+  assert.equal(firstDay.monthSales, 0, 'future invoices are excluded from month to date');
+  assert.equal(firstDay.paymentBreakdown.find((row) => row.method === 'cash').amount, 20000 * 100);
+
+  const summary = getDashboardSummary({ today: '2026-10-05' });
+  // Three Mehr invoices (Mehr 6, 8, 13); the Shahrivar 31 invoice is last month.
   assert.equal(summary.monthSales, 3 * 20000 * 100);
   const byMethod = Object.fromEntries(summary.paymentBreakdown.map((row) => [row.method, row.amount]));
   // Receipts are attributed by paid_at: the Shahrivar 29 receipt drops out even
   // though its invoice is dated this month.
   assert.equal(byMethod.cash, 2 * 20000 * 100);
   assert.equal(byMethod.card, 20000 * 100);
-  closeDatabase();
-  fs.rmSync(directory, { recursive: true, force: true });
 });

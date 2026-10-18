@@ -137,7 +137,7 @@ renderer.setManagedPage = function setManagedPageWithSettings(page) {
   // Resolved at call time: 04-invoices-assistant-reports.js loads later and
   // provides the full page router (all managed pages), which supersedes the
   // partial router defined earlier in this file.
-  (typeof renderer.setPageRouter === 'function' ? setPageRouter : originalManagedPageForSettings)(page);
+  (typeof renderer.setPageRouter === 'function' ? renderer.setPageRouter : originalManagedPageForSettings)(page);
   if (page === 'settings') {
     renderer.$('#settingsPage')?.classList.remove('hidden');
     renderer.$('#placeholderPage')?.classList.add('hidden');

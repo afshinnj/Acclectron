@@ -590,8 +590,10 @@ const createWindow = () => {
   });
 
   hardenWebContents(mainWindow.webContents);
-  mainWindow.webContents.on('console-message', (_event, details) => {
-    if (details?.level !== 'error') return;
+  mainWindow.webContents.on('console-message', (_event, details, message, lineNumber, sourceId) => {
+    // Older Electron releases emit positional arguments and numeric levels.
+    if (typeof details !== 'object' || details === null) details = { level: details, message, lineNumber, sourceId };
+    if (details.level !== 'error' && details.level !== 3) return;
     const location = `${details.sourceId || 'renderer'}:${details.lineNumber || 0}`;
     appendProcessLog('renderer-console', new Error(`${details.message} (${location})`));
   });

@@ -1,3 +1,5 @@
+import { publishRendererBindings } from '../shared/bridge.mjs';
+
 /* Returns, cashbook and restore workspace. */
 function initializeOperationsPages() {
   if ($('#returnsPage')) return;
@@ -320,7 +322,7 @@ function ensureInstallmentPaymentDialog() {
   document.body.insertAdjacentHTML('beforeend', `<div id="installmentPaymentBackdrop" class="modal-backdrop hidden"><div class="modal" style="max-width:420px"><div class="modal-header"><div><span class="eyebrow">دریافت قسط</span><h3>ثبت پرداخت قسط</h3></div><button type="button" class="modal-close installment-payment-close">×</button></div><form id="installmentPaymentForm"><label>مبلغ پرداختی<input id="installmentPaymentAmount" class="money-input" inputmode="decimal" required></label><div id="installmentPaymentError" class="form-error hidden"></div><div class="modal-actions"><button type="button" class="secondary installment-payment-close">انصراف</button><button type="submit" class="primary">ثبت پرداخت</button></div></form></div></div>`);
   backdrop = $('#installmentPaymentBackdrop');
   backdrop.addEventListener('click', (event) => {
-    if (event.target === backdrop || event.target.closest('.installment-payment-close')) backdrop.classList.add('hidden');
+    if (event.target.closest('.installment-payment-close')) backdrop.classList.add('hidden');
   });
   $('#installmentPaymentForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -449,3 +451,21 @@ async function loadProfitLossPage() {
   };
 }
 
+publishRendererBindings(window, {
+  mutable: {
+    operationsInitialized: { get: () => operationsInitialized, set: (value) => { operationsInitialized = value; } }
+  },
+  functions: {
+    initializeOperationsPages: { get: () => initializeOperationsPages, set: (value) => { initializeOperationsPages = value; } },
+    loadReturnsPage: { get: () => loadReturnsPage, set: (value) => { loadReturnsPage = value; } },
+    loadCashPage: { get: () => loadCashPage, set: (value) => { loadCashPage = value; } },
+    loadLedgerPage: { get: () => loadLedgerPage, set: (value) => { loadLedgerPage = value; } },
+    loadInventoryPage: { get: () => loadInventoryPage, set: (value) => { loadInventoryPage = value; } },
+    loadUsersPage: { get: () => loadUsersPage, set: (value) => { loadUsersPage = value; } },
+    loadChecksPage: { get: () => loadChecksPage, set: (value) => { loadChecksPage = value; } },
+    ensureInstallmentPaymentDialog: { get: () => ensureInstallmentPaymentDialog, set: (value) => { ensureInstallmentPaymentDialog = value; } },
+    openInstallmentPaymentDialog: { get: () => openInstallmentPaymentDialog, set: (value) => { openInstallmentPaymentDialog = value; } },
+    loadInstallmentsPage: { get: () => loadInstallmentsPage, set: (value) => { loadInstallmentsPage = value; } },
+    loadProfitLossPage: { get: () => loadProfitLossPage, set: (value) => { loadProfitLossPage = value; } }
+  }
+});

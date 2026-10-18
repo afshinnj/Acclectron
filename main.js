@@ -9,12 +9,9 @@ const crypto = require('node:crypto');
 const { parseXlsxFile, normalizeProductRows } = require('./src/main/importer');
 const {
   closeDatabase,
-  createPurchase,
   createParty,
   createCategory,
   createProduct,
-  createSale,
-  mergeDailySales,
   getDashboardSummary,
   listNotifications,
   getSalesReport,
@@ -40,66 +37,23 @@ const {
   getCurrencyInputFactor,
   getAppSettings,
   saveAppSettings,
-  getNextInvoiceNumber,
   getNextProductCode,
   checkProductDuplicate,
-  listSales,
-  listPurchases,
-  getPurchasePriceHistory,
-  getInvoiceDetails,
-  updateSale,
-  settleInvoice,
-  cancelInvoice,
-  setSalePinned,
-  createSaleReturn,
-  getSaleReturnDetails,
-  listSalesReturns,
-  cancelSaleReturn,
-  createPurchaseReturn,
-  getPurchaseReturnDetails,
-  listPurchaseReturns,
-  cancelPurchaseReturn,
-  createCashTransaction,
-  getCashTransaction,
-  listCashTransactions,
-  getCashSummary,
   getProfitLossReport,
-  closeDailyAccount,
-  getDailyClosure,
-  listDailyClosures,
-  getPartyLedger,
-  adjustProductStock,
-  listStockMovements,
-  createUser,
-  listUsers,
-  setUserActive,
-  loginUser,
-  logoutUser,
   getCurrentUser,
-  listAuditLogs,
-  setCurrentUser,
   requirePermission,
-  listChecks,
-  updateCheckStatus,
-  createInstallmentPlan,
-  listInstallmentPlans,
-  recordInstallmentPayment,
-  changeCurrentUserPassword,
   userUsesDefaultPassword,
   getSalesForecast,
-  beginWindowsHelloRegistration,
-  finishWindowsHelloRegistration,
-  beginWindowsHelloAuthentication,
-  finishWindowsHelloAuthentication,
-  setQuickPin,
-  clearQuickPin,
-  getQuickPinStatus,
-  unlockWithQuickPin
 } = require('./src/main/database');
 const { aiStatus, rankProductsBySimilarity } = require('./src/main/ai/semantic');
 const { planCommand, applyProductUpdates, undoLastAssistantApply } = require('./src/main/ai/assistant');
 const { isTrustedAppUrl, isTrustedAppSender } = require('./src/main/security');
 const { restoreDatabaseFile } = require('./src/main/db/backup');
+const { createSecureHandle } = require('./src/main/ipc/authorization');
+const { registerAccountHandlers } = require('./src/main/ipc/accounts');
+const { registerInvoiceHandlers } = require('./src/main/ipc/invoices');
+const { registerOperationsHandlers } = require('./src/main/ipc/operations');
+const { registerWindowHandlers } = require('./src/main/ipc/window');
 
 // Keep the main process alive on unexpected errors and leave a trace on disk
 // (userData/logs, newest 10 files) so failures can be diagnosed afterwards.
@@ -160,75 +114,13 @@ function hardenWebContents(webContents) {
 }
 
 function registerIpcHandlers() {
-  // Security boundary of the whole IPC surface: every channel requires a
-  // logged-in user unless it is explicitly public, and the channels listed in
-  // IPC_PERMISSIONS additionally require an explicit role permission. The
-  // renderer is sandboxed behind contextIsolation, so this boundary is the
-  // single trust line for every privileged operation.
-  const PUBLIC_IPC_CHANNELS = new Set([
-    'auth:login',
-    'auth:current',
-    'auth:logout',
-    // Windows Hello authentication replaces the password prompt on the login
-    // screen, so its options/verify pair must stay reachable before login.
-    'auth:webauthn:authentication-options',
-    'auth:webauthn:authentication-verify',
-    // The Quick PIN status/unlock pair guards an already-established session
-    // and must remain callable from the lock screen.
-    'auth:quick-pin:status',
-    'auth:quick-pin:unlock',
-    // Boot configuration (appearance, passwordless-login flag) is read while
-    // the login screen is still up; it exposes no business records.
-    'settings:get',
-    'window:is-maximized',
-    'window:set-overlay'
-  ]);
-  const IPC_PERMISSIONS = {
-    'products:create': 'products',
-    'products:update': 'products',
-    'products:quick-update': 'products',
-    'products:set-active': 'products',
-    'products:import-preview': 'products',
-    'products:import-confirm': 'products',
-    'products:template': 'products',
-    'products:export': 'products',
-    'categories:create': 'products',
-    'categories:update': 'products',
-    'categories:set-active': 'products',
-    'units:create': 'settings',
-    'units:update': 'settings',
-    'units:set-active': 'settings',
-    'parties:create': 'parties',
-    'parties:update': 'parties',
-    'parties:set-active': 'parties',
-    'reports:sales': 'reports',
-    'reports:forecast': 'reports',
-    'reports:export-csv': 'reports',
-    'reports:export-pdf': 'reports',
-    'profit-loss:report': 'reports',
-    'ai:assistant-apply': 'products',
-    'ai:assistant-undo': 'products',
-    'ai:assistant-export': 'reports',
-    'ai:assistant-export-pdf': 'reports',
-    'settings:save': 'settings',
-    'settings:choose-logo': 'settings',
-    'settings:choose-backup-path': 'settings',
-    'settings:backup-now': 'settings',
-    'settings:official-start': 'settings',
-    'settings:restore': 'settings',
-    'users:create': 'users',
-    'users:list': 'users',
-    'users:set-active': 'users'
-  };
-  const secureHandle = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
-    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) {
-      throw new Error('درخواست از پنجرهٔ مجاز برنامه دریافت نشد.');
-    }
-    if (PUBLIC_IPC_CHANNELS.has(channel)) return handler(event, ...args);
-    const permission = IPC_PERMISSIONS[channel];
-    if (permission) requirePermission(permission);
-    else if (!getCurrentUser()) throw new Error('ابتدا وارد حساب کاربری شوید.');
-    return handler(event, ...args);
+  const secureHandle = createSecureHandle({
+    ipcMain,
+    isTrustedAppSender,
+    getMainWindow: () => mainWindow,
+    appDirectory: __dirname,
+    getCurrentUser,
+    requirePermission
   });
   secureHandle('settings:get', () => getAppSettings());
   secureHandle('settings:save', (_event, payload) => {
@@ -581,102 +473,17 @@ function registerIpcHandlers() {
     fs.writeFileSync(selection.filePath, data);
     return { canceled: false, filePath: selection.filePath };
   });
-  secureHandle('sales:create', (_event, payload) => createSale(payload));
-  secureHandle('sales:merge-daily', (_event, payload) => mergeDailySales(payload));
-  secureHandle('purchases:create', (_event, payload) => createPurchase(payload));
-  secureHandle('sales:list', (_event, payload) => listSales(payload));
-  secureHandle('purchases:list', (_event, payload) => listPurchases(payload));
-  secureHandle('purchases:price-history', (_event, productId, payload) => getPurchasePriceHistory(productId, payload));
-  secureHandle('invoices:next-number', (_event, kind, date) => getNextInvoiceNumber(kind, date));
-  secureHandle('invoices:details', (_event, kind, id) => getInvoiceDetails(kind, id));
-  secureHandle('invoices:update', (_event, kind, id, payload) => {
-    if (kind !== 'sale') throw new Error('ویرایش این نوع فاکتور هنوز پشتیبانی نمی‌شود.');
-    return updateSale(id, payload);
-  });
-  secureHandle('invoices:settle', (_event, kind, id, payload) => settleInvoice(kind, id, payload));
-  secureHandle('invoices:cancel', (_event, kind, id) => cancelInvoice(kind, id));
-  secureHandle('invoices:set-pinned', (_event, kind, id, pinned) => {
-    if (kind !== 'sale') throw new Error('سنجاق کردن فقط برای فاکتورهای فروش فعال است.');
-    return setSalePinned(id, pinned);
-  });
-  secureHandle('returns:sale:create', (_event, payload) => createSaleReturn(payload));
-  secureHandle('returns:sale:details', (_event, id) => getSaleReturnDetails(id));
-  secureHandle('returns:sale:list', (_event, payload) => listSalesReturns(payload));
-  secureHandle('returns:sale:cancel', (_event, id) => cancelSaleReturn(id));
-  secureHandle('returns:purchase:create', (_event, payload) => createPurchaseReturn(payload));
-  secureHandle('returns:purchase:details', (_event, id) => getPurchaseReturnDetails(id));
-  secureHandle('returns:purchase:list', (_event, payload) => listPurchaseReturns(payload));
-  secureHandle('returns:purchase:cancel', (_event, id) => cancelPurchaseReturn(id));
-  secureHandle('cash:create', (_event, payload) => createCashTransaction(payload));
-  secureHandle('cash:details', (_event, id) => getCashTransaction(id));
-  secureHandle('cash:list', (_event, payload) => listCashTransactions(payload));
-  secureHandle('cash:summary', (_event, payload) => getCashSummary(payload));
-  secureHandle('parties:ledger', (_event, id, payload) => getPartyLedger(id, payload));
-  secureHandle('inventory:adjust', (_event, id, payload) => adjustProductStock(id, payload));
-  secureHandle('inventory:movements', (_event, payload) => listStockMovements(payload));
-  secureHandle('auth:login', (_event, username, password) => loginUser(username, password));
-  secureHandle('auth:logout', () => logoutUser());
-  secureHandle('auth:current', () => getCurrentUser());
-  secureHandle('users:create', (_event, payload) => createUser(payload));
-  secureHandle('users:list', () => listUsers());
-  secureHandle('users:set-active', (_event, id, active) => setUserActive(id, active));
-  secureHandle('audit:list', (_event, payload) => listAuditLogs(payload));
-  secureHandle('checks:list', (_event, payload) => listChecks(payload));
-  secureHandle('checks:update-status', (_event, id, status, notes) => updateCheckStatus(id, status, notes));
-  secureHandle('installments:create-plan', (_event, payload) => createInstallmentPlan(payload));
-  secureHandle('installments:list-plans', (_event, payload) => listInstallmentPlans(payload));
-  secureHandle('installments:record-payment', (_event, id, payload) => recordInstallmentPayment(id, payload));
-  secureHandle('auth:change-password', (_event, currentPassword, newPassword) => changeCurrentUserPassword(currentPassword, newPassword));
-  secureHandle('auth:webauthn:registration-options', () => beginWindowsHelloRegistration());
-  secureHandle('auth:webauthn:registration-verify', (_event, response) => finishWindowsHelloRegistration(response));
-  secureHandle('auth:webauthn:authentication-options', (_event, username) => beginWindowsHelloAuthentication(username));
-  secureHandle('auth:webauthn:authentication-verify', (_event, username, response) => finishWindowsHelloAuthentication(username, response));
-  secureHandle('auth:quick-pin:set', (_event, pin, currentPassword) => setQuickPin(pin, currentPassword));
-  secureHandle('auth:quick-pin:clear', (_event, currentPassword) => clearQuickPin(currentPassword));
-  secureHandle('auth:quick-pin:status', () => getQuickPinStatus());
-  secureHandle('auth:quick-pin:unlock', (_event, pin) => unlockWithQuickPin(pin));
-  secureHandle('profit-loss:report', (_event, payload) => getProfitLossReport(payload));
-  secureHandle('daily-close:create', (_event, payload) => closeDailyAccount(payload));
-  secureHandle('daily-close:details', (_event, id) => getDailyClosure(id));
-  secureHandle('daily-close:list', (_event, payload) => listDailyClosures(payload));
-  ipcMain.on('window:minimize', (event) => {
-    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
-    mainWindow?.minimize();
-  });
-  ipcMain.on('window:toggle-maximize', (event) => {
-    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
-    if (!mainWindow) return;
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    else mainWindow.maximize();
-  });
-  ipcMain.on('window:close', (event) => {
-    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
-    mainWindow?.webContents.send('window:close-requested');
-  });
-  ipcMain.on('window:close-confirmed', (event) => {
-    if (!isTrustedAppSender(event, mainWindow?.webContents, __dirname)) return;
-    isWindowCloseApproved = true;
-    // Confirmed close minimises to the system tray rather than terminating;
-    // "خروج کامل" in the tray context menu is the only true exit path.
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.hide();
-      mainWindow.setSkipTaskbar(true);
-    }
-  });
-  secureHandle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
-  secureHandle('window:set-overlay', (_event, payload = {}) => {
-    if (process.platform !== 'win32' || typeof mainWindow?.setTitleBarOverlay !== 'function') return false;
-    try {
-      const height = Math.max(32, Math.min(64, Math.round(Number(payload.height) || 48)));
-      mainWindow.setTitleBarOverlay({
-        color: String(payload.color || '#111a2b'),
-        symbolColor: String(payload.symbolColor || '#dbe4f0'),
-        height
-      });
-      return true;
-    } catch {
-      return false;
-    }
+  registerInvoiceHandlers(secureHandle);
+  registerOperationsHandlers(secureHandle);
+  registerAccountHandlers(secureHandle);
+  registerWindowHandlers({
+    ipcMain,
+    secureHandle,
+    isTrustedAppSender,
+    getMainWindow: () => mainWindow,
+    appDirectory: __dirname,
+    markWindowCloseApproved: () => { isWindowCloseApproved = true; },
+    platform: process.platform
   });
 }
 

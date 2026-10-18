@@ -1,22 +1,9 @@
+import { publishRendererBindings } from './shared/bridge.mjs';
+import { localDateIso } from './shared/date-utils.mjs';
+
 const state = { page: 'dashboard', items: [], products: [] };
 const $ = (selector) => document.querySelector(selector);
 const dailySaleDraftStorageKey = 'accletron.daily-sale.draft.v1';
-// Close the dynamically-created product details drawer at capture phase so
-// other delegated handlers cannot swallow the click.
-document.addEventListener('click', (event) => {
-  const closeButton = event.target?.closest?.('[data-close-product-details]');
-  if (!closeButton) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  document.querySelector('#productDetailsDrawer')?.classList.add('hidden');
-}, true);
-document.addEventListener('pointerdown', (event) => {
-  const closeButton = event.target?.closest?.('[data-close-product-details]');
-  if (!closeButton) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  document.querySelector('#productDetailsDrawer')?.classList.add('hidden');
-}, true);
 // Bind login at document level so it remains available even while the
 // dashboard/settings markup is being initialized asynchronously.
 document.addEventListener('click', async (event) => {
@@ -317,10 +304,6 @@ function ensureConfirmDialog() {
   };
   $('#confirmDialogCancel').addEventListener('click', () => finish(false));
   $('#confirmDialogAccept').addEventListener('click', () => finish(true));
-  backdrop.addEventListener('click', (event) => { if (event.target === backdrop) finish(false); });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !backdrop.classList.contains('hidden')) finish(false);
-  });
   return backdrop;
 }
 
@@ -856,7 +839,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 $('#version').textContent = window.appInfo?.version || '۱.۰.۰';
-$('#saleDate').value = new Date().toISOString().slice(0, 10);
+$('#saleDate').value = localDateIso();
 $('#clock').textContent = new Intl.DateTimeFormat('fa-IR', { dateStyle: 'medium' }).format(new Date());
 initializeDashboardMarkup();
 renderDashboardSkeleton();
@@ -865,3 +848,60 @@ renderDashboardSkeleton();
 if (sessionReady) window.api.dashboard.summary().then((summary) => { renderMetrics(summary); renderDashboard(summary); }).catch(() => {});
 setPage('dashboard');
 
+publishRendererBindings(window, {
+  constants: { state, $, dailySaleDraftStorageKey, currencyIsRial, currencyFactor, currencyLabel, formatCurrencyNumber, money, normalizeDigits, normalizeSearchText, svgIcon, NAV_ICONS, number },
+  mutable: {
+    sessionReady: { get: () => sessionReady, set: (value) => { sessionReady = value; } },
+    uiCurrency: { get: () => uiCurrency, set: (value) => { uiCurrency = value; } },
+    defaultSettlementMethod: { get: () => defaultSettlementMethod, set: (value) => { defaultSettlementMethod = value; } },
+    uiTheme: { get: () => uiTheme, set: (value) => { uiTheme = value; } },
+    uiThemePreference: { get: () => uiThemePreference, set: (value) => { uiThemePreference = value; } },
+    uiCalendar: { get: () => uiCalendar, set: (value) => { uiCalendar = value; } },
+    uiNotifications: { get: () => uiNotifications, set: (value) => { uiNotifications = value; } },
+    uiShortcuts: { get: () => uiShortcuts, set: (value) => { uiShortcuts = value; } },
+    systemThemeMediaQuery: { get: () => systemThemeMediaQuery, set: (value) => { systemThemeMediaQuery = value; } },
+    systemThemeListenerBound: { get: () => systemThemeListenerBound, set: (value) => { systemThemeListenerBound = value; } },
+    toastTimer: { get: () => toastTimer, set: (value) => { toastTimer = value; } },
+    confirmDialogResolver: { get: () => confirmDialogResolver, set: (value) => { confirmDialogResolver = value; } },
+    applicationClosePromptOpen: { get: () => applicationClosePromptOpen, set: (value) => { applicationClosePromptOpen = value; } },
+    notificationState: { get: () => notificationState, set: (value) => { notificationState = value; } },
+    dashboardSalesRequest: { get: () => dashboardSalesRequest, set: (value) => { dashboardSalesRequest = value; } },
+    dashboardForecastRequest: { get: () => dashboardForecastRequest, set: (value) => { dashboardForecastRequest = value; } }
+  },
+  functions: {
+    refreshAfterLogin: { get: () => refreshAfterLogin, set: (value) => { refreshAfterLogin = value; } },
+    applyAppearanceSettings: { get: () => applyAppearanceSettings, set: (value) => { applyAppearanceSettings = value; } },
+    refreshDailySaleCurrencyLabels: { get: () => refreshDailySaleCurrencyLabels, set: (value) => { refreshDailySaleCurrencyLabels = value; } },
+    refreshCurrencyDisplays: { get: () => refreshCurrencyDisplays, set: (value) => { refreshCurrencyDisplays = value; } },
+    applySvgIcons: { get: () => applySvgIcons, set: (value) => { applySvgIcons = value; } },
+    showToast: { get: () => showToast, set: (value) => { showToast = value; } },
+    warnDefaultPassword: { get: () => warnDefaultPassword, set: (value) => { warnDefaultPassword = value; } },
+    ensureConfirmDialog: { get: () => ensureConfirmDialog, set: (value) => { ensureConfirmDialog = value; } },
+    showConfirmDialog: { get: () => showConfirmDialog, set: (value) => { showConfirmDialog = value; } },
+    requestApplicationClose: { get: () => requestApplicationClose, set: (value) => { requestApplicationClose = value; } },
+    initializeNotifications: { get: () => initializeNotifications, set: (value) => { initializeNotifications = value; } },
+    initializeInstallmentNavigation: { get: () => initializeInstallmentNavigation, set: (value) => { initializeInstallmentNavigation = value; } },
+    loadNotifications: { get: () => loadNotifications, set: (value) => { loadNotifications = value; } },
+    setPage: { get: () => setPage, set: (value) => { setPage = value; } },
+    renderMetrics: { get: () => renderMetrics, set: (value) => { renderMetrics = value; } },
+    initializeDashboardMarkup: { get: () => initializeDashboardMarkup, set: (value) => { initializeDashboardMarkup = value; } },
+    loadDashboardForecast: { get: () => loadDashboardForecast, set: (value) => { loadDashboardForecast = value; } },
+    dashboardTodayIso: { get: () => dashboardTodayIso, set: (value) => { dashboardTodayIso = value; } },
+    dashboardShiftIso: { get: () => dashboardShiftIso, set: (value) => { dashboardShiftIso = value; } },
+    dashboardPeriodWindow: { get: () => dashboardPeriodWindow, set: (value) => { dashboardPeriodWindow = value; } },
+    dashboardPeriodKey: { get: () => dashboardPeriodKey, set: (value) => { dashboardPeriodKey = value; } },
+    dashboardPeriodChartLabel: { get: () => dashboardPeriodChartLabel, set: (value) => { dashboardPeriodChartLabel = value; } },
+    loadDashboardSalesPanel: { get: () => loadDashboardSalesPanel, set: (value) => { loadDashboardSalesPanel = value; } },
+    renderDashboardSkeleton: { get: () => renderDashboardSkeleton, set: (value) => { renderDashboardSkeleton = value; } },
+    sparklineSvg: { get: () => sparklineSvg, set: (value) => { sparklineSvg = value; } },
+    renderDashboard: { get: () => renderDashboard, set: (value) => { renderDashboard = value; } },
+    renderResults: { get: () => renderResults, set: (value) => { renderResults = value; } },
+    renderItems: { get: () => renderItems, set: (value) => { renderItems = value; } },
+    updateSummary: { get: () => updateSummary, set: (value) => { updateSummary = value; } },
+    addProduct: { get: () => addProduct, set: (value) => { addProduct = value; } },
+    searchProducts: { get: () => searchProducts, set: (value) => { searchProducts = value; } },
+    saveSale: { get: () => saveSale, set: (value) => { saveSale = value; } },
+    clearSale: { get: () => clearSale, set: (value) => { clearSale = value; } },
+    authOverlayVisible: { get: () => authOverlayVisible, set: (value) => { authOverlayVisible = value; } }
+  }
+});

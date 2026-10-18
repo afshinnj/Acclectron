@@ -1,0 +1,10 @@
+import './shared/interaction-policy.mjs';
+import './core.mjs';
+import './features/management.mjs';
+import './features/settings-page.mjs';
+import './features/settings-print.mjs';
+import './features/invoices.mjs';
+import './features/assistant-reports.mjs';
+import './features/daily-sales.mjs';
+import './features/operations.mjs';
+import './features/auth.mjs';

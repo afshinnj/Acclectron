@@ -1,3 +1,6 @@
+import { publishRendererBindings } from '../shared/bridge.mjs';
+import { localDateIso } from '../shared/date-utils.mjs';
+
 /* Management screens are injected here so existing installations keep their
    original shell while gaining product/category CRUD without a migration. */
 const managementState = { ready: false, products: [], categories: [], units: [], parties: [] };
@@ -118,7 +121,7 @@ function bindJalaliDatePickers(forceJalali = false) {
     if (input.dataset.jalaliPickerBound) return;
     input.dataset.jalaliPickerBound = '1';
     input.addEventListener('focus', () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateIso();
       const current = parseJalaliDate(input.value)
         || parseJalaliDate(isoToJalali(today));
       renderJalaliPicker(input, current.year, current.month);
@@ -227,7 +230,7 @@ function initializeSalesMarkupLegacy() {
   const page = $('#salesPage');
   if (!page || page.dataset.redesigned) return;
   page.innerHTML = `<div class="page-heading daily-sale-heading"><div><span class="eyebrow">عملیات فروش</span><h2>ثبت فروش روزانه</h2><div class="daily-sale-shortcuts"><kbd>F2</kbd> جست‌وجو <kbd>Enter</kbd> افزودن <kbd>F9</kbd> ثبت فروش</div></div><label class="sale-date-field daily-sale-date-field"><span class="sale-date-caption"><i aria-hidden="true">◷</i>تاریخ فروش</span><input id="saleDate" type="date"></label></div><div class="sale-modern-layout"><section class="panel product-picker"><div class="picker-header"><div><h3>افزودن کالا</h3><small>بارکد را اسکن کنید یا نام، کد و بارکد را جست‌وجو کنید.</small></div><div class="toolbar-search daily-sale-search"><span>⌕</span><input id="saleProductFilter" placeholder="اسکن بارکد یا جست‌وجوی کالا" autocomplete="off"><kbd>F2</kbd></div></div><div class="daily-sale-hint">با اسکن دوبارهٔ یک کالا، تعداد همان ردیف افزایش پیدا می‌کند.</div><div id="saleProductCards" class="product-cards"></div></section><aside class="panel modern-cart"><div class="cart-heading"><div><h3>سبد فروش</h3><small id="cartCount">۰ قلم</small></div><button id="clearSaleCart" class="danger-button" type="button">پاک کردن سبد</button></div><div class="table-wrap"><table><thead><tr><th>محصول</th><th>قیمت</th><th>تعداد</th><th></th></tr></thead><tbody id="modernSaleItems"></tbody></table></div><div class="cart-summary"><div><span>اقلام</span><strong id="cartItemCount">۰</strong></div><div><span>مبلغ کل</span><strong id="modernSaleTotal">${money(0)}</strong></div></div><div id="modernSaleError" class="form-error hidden"></div><div class="daily-sale-actions"><button id="modernSaveSale" class="primary wide" type="button">ثبت فروش <kbd>F9</kbd></button><button id="modernSaveSalePrint" class="secondary wide" type="button">ثبت و چاپ</button></div></aside></div>`;
-  $('#saleDate').value = new Date().toISOString().slice(0, 10);
+  $('#saleDate').value = localDateIso();
   page.dataset.redesigned = '1';
   bindSalesEvents();
   bindJalaliDatePickers();
@@ -605,7 +608,7 @@ function bindManagementEvents() {
   };
   $('#productName').addEventListener('blur', checkProductDuplicateOnBlur);
   $('#productBarcode').addEventListener('blur', checkProductDuplicateOnBlur);
-  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } const invoiceProduct = event.target.closest('.invoice-new-product'); if (invoiceProduct) { const kind = invoiceProduct.dataset.kind; const emptyRow = invoiceState[kind].items.findIndex((item) => !item.productId); openProductForInvoice(kind, emptyRow >= 0 ? emptyRow : invoiceState[kind].items.length - 1); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]') || event.target.id === 'managementModalBackdrop') closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openProductForEdit(editProduct.dataset.id); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
+  document.addEventListener('click', (event) => { const pageButton = event.target.closest('[data-page]'); if (pageButton) { event.preventDefault(); setManagedPage(pageButton.dataset.page); } const invoiceProduct = event.target.closest('.invoice-new-product'); if (invoiceProduct) { const kind = invoiceProduct.dataset.kind; const emptyRow = invoiceState[kind].items.findIndex((item) => !item.productId); openProductForInvoice(kind, emptyRow >= 0 ? emptyRow : invoiceState[kind].items.length - 1); } if (event.target.closest('#addProduct')) openManagementModal('product'); if (event.target.closest('#addCategory')) openManagementModal('category'); if (event.target.closest('#addParty')) openManagementModal('party'); if (event.target.closest('[data-close-management]')) closeManagementModal(); const editProduct = event.target.closest('.edit-product'); if (editProduct) openProductForEdit(editProduct.dataset.id); const editCategory = event.target.closest('.edit-category'); if (editCategory) openManagementModal('category', managementState.categories.find((c) => c.id === Number(editCategory.dataset.id))); const editParty = event.target.closest('.edit-party'); if (editParty) openManagementModal('party', managementState.parties.find((p) => p.id === Number(editParty.dataset.id))); const toggleProduct = event.target.closest('.toggle-product'); if (toggleProduct) { const active = toggleProduct.dataset.active !== '1'; window.api.products.setActive(Number(toggleProduct.dataset.id), active).then(() => { showToast(active ? 'کالا فعال شد.' : 'کالا غیرفعال شد.'); return loadManagedProducts(); }).catch((err) => showToast(err.message, true)); } const toggleCategory = event.target.closest('.toggle-category'); if (toggleCategory) { const active = toggleCategory.dataset.active !== '1'; window.api.categories.setActive(Number(toggleCategory.dataset.id), active).then(() => { showToast(active ? 'دسته‌بندی فعال شد.' : 'دسته‌بندی غیرفعال شد.'); return loadManagedCategories(); }).catch((err) => showToast(err.message, true)); } const toggleParty = event.target.closest('.toggle-party'); if (toggleParty) { const active = toggleParty.dataset.active !== '1'; window.api.customers.setActive(Number(toggleParty.dataset.id), active).then(() => { showToast(active ? 'طرف‌حساب فعال شد.' : 'طرف‌حساب غیرفعال شد.'); return loadManagedParties(); }).catch((err) => showToast(err.message, true)); } });
   ['productsFilter', 'productCategoryFilter', 'showInactiveProducts'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedProducts)); ['categoriesFilter', 'showInactiveCategories'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedCategories)); ['partiesFilter', 'partyTypeFilter', 'showInactiveParties'].forEach((id) => $(`#${id}`)?.addEventListener('input', renderManagedParties)); $('#productCategory').addEventListener('change', updateProductCodePreview); $('#productPurchasePrice').addEventListener('input', updateProductSellingPrices); $('#productWholesalePrice').addEventListener('input', () => { productSellingPriceAuto.wholesale = false; }); $('#productRetailPrice').addEventListener('input', () => { productSellingPriceAuto.retail = false; });
   $('#productForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -659,7 +662,6 @@ function bindManagementEvents() {
   ['productPurchasePrice', 'productWholesalePrice', 'productRetailPrice'].forEach((id) => $(`#${id}`)?.addEventListener('input', updateProductProfitPreview));
   $('#categoryForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#categoryFormError'); error.classList.add('hidden'); const payload = { code: $('#categoryCode').value, name: $('#categoryName').value, description: $('#categoryDescription').value }; try { const id = $('#categoryId').value; if (id) await window.api.categories.update(Number(id), payload); else await window.api.categories.create(payload); closeManagementModal(); showToast(id ? 'دسته‌بندی با موفقیت ویرایش شد.' : 'دسته‌بندی با موفقیت ثبت شد.'); await loadManagedCategories(); } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
   $('#partyForm').addEventListener('submit', async (event) => { event.preventDefault(); const error = $('#partyFormError'); error.classList.add('hidden'); const payload = { firstName: $('#partyFirstName').value, lastName: $('#partyLastName').value, phone: $('#partyPhone').value, mobile: $('#partyMobile').value, address: $('#partyAddress').value, partyType: $('#partyType').value, description: $('#partyDescription').value }; try { const id = $('#partyId').value; if (id) await window.api.customers.update(Number(id), payload); else await window.api.customers.create(payload); closeManagementModal(); showToast(id ? 'طرف‌حساب با موفقیت ویرایش شد.' : 'طرف‌حساب با موفقیت ثبت شد.'); await loadManagedParties(); } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); } });
-  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeManagementModal(); });
 }
 
 // Deferred to the end of 07-auth-boot.js. These used to run here, but the
@@ -1150,150 +1152,77 @@ renderManagedProducts = function renderManagedProductsWithCount() {
 
 alignProductPageHeader();
 
-function initializeSettingsPage() {
-  if ($('#settingsPage')) return;
-  const placeholder = $('#placeholderPage');
-  if (!placeholder) return;
-  placeholder.insertAdjacentHTML('beforebegin', `
-    <section id="settingsPage" class="page hidden settings-page">
-      <div class="page-heading"><div><span class="eyebrow">تنظیمات برنامه</span><h2>تنظیمات فروشگاه و چاپ</h2></div><button id="reloadPrinters" class="secondary" type="button">به‌روزرسانی پرینترها</button></div>
-      <div class="settings-grid">
-        <form id="storeSettingsForm" class="panel settings-card">
-          <div class="settings-card-heading"><div><h3>مشخصات فروشگاه</h3><small>این اطلاعات در سربرگ و پایین فاکتورها استفاده می‌شود.</small></div></div>
-          <div class="form-grid">
-            <label>نام فروشگاه *<input id="settingsStoreName" required></label>
-            <label>شعار یا عنوان کوتاه<input id="settingsStoreSlogan"></label>
-            <label>شماره تماس<input id="settingsStorePhone" inputmode="tel"></label>
-            <label>کد پستی<input id="settingsStorePostalCode" inputmode="numeric"></label>
-            <label class="full-field">آدرس فروشگاه<textarea id="settingsStoreAddress" rows="3"></textarea></label>
-            <label>آدرس سایت<input id="settingsStoreWebsite" placeholder="https://"></label>
-            <label>اینستاگرام<input id="settingsStoreInstagram" placeholder="@store"></label>
-            <label>روبیکا<input id="settingsStoreRubika"></label>
-            <label class="full-field">متن پایین فاکتور<textarea id="settingsInvoiceFooter" rows="3" placeholder="از خرید شما سپاسگزاریم"></textarea></label>
-          </div>
-          <div class="logo-picker"><div><strong>لوگوی فروشگاه</strong><small id="settingsLogoPath">لوگویی انتخاب نشده است.</small></div><button id="chooseStoreLogo" class="secondary" type="button">انتخاب تصویر</button><input id="settingsLogoPathValue" type="hidden"></div>
-          <div id="storeSettingsError" class="form-error hidden"></div>
-          <div class="modal-actions"><button class="primary" type="submit">ذخیره مشخصات فروشگاه</button></div>
-        </form>
-        <form id="printSettingsForm" class="panel settings-card">
-          <div class="settings-card-heading"><div><h3>تنظیمات چاپ</h3><small>انتخاب پرینتر و اندازه کاغذ فاکتورها.</small></div></div>
-          <label>پرینتر پیش‌فرض<select id="settingsPrinter"><option value="">پرینتر پیش‌فرض سیستم</option></select></label>
-          <label>اندازه کاغذ<select id="settingsPaper"><option value="A4">A4</option><option value="A5">A5</option><option value="80mm">رول ۸۰ میلی‌متر</option><option value="58mm">رول ۵۸ میلی‌متر</option></select></label>
-          <label class="settings-check"><input id="settingsColor" type="checkbox"> چاپ رنگی</label>
-          <label class="settings-check"><input id="settingsAutoPrintSale" type="checkbox"> چاپ خودکار فاکتور فروش بعد از ثبت</label>
-          <label class="settings-check"><input id="settingsAutoPrintPurchase" type="checkbox"> چاپ خودکار فاکتور خرید بعد از ثبت</label>
-          <div id="printSettingsError" class="form-error hidden"></div>
-          <div class="modal-actions"><button class="primary" type="submit">ذخیره تنظیمات چاپ</button></div>
-        </form>
-      </div>
-    </section>`);
-
-  async function loadPrinters(selected = '') {
-    const select = $('#settingsPrinter');
-    if (!select) return;
-    try {
-      const printers = await window.api.settings.printers();
-      select.innerHTML = '<option value="">پرینتر پیش‌فرض سیستم</option>' +
-        printers.map((printer) => `<option value="${esc(printer.name)}">${esc(printer.displayName)}${printer.isDefault ? ' (پیش‌فرض)' : ''}</option>`).join('');
-      select.value = selected || '';
-    } catch (error) {
-      select.innerHTML = '<option value="">دریافت فهرست پرینترها ناموفق بود</option>';
-    }
+publishRendererBindings(window, {
+  constants: { managementState, saleState, invoiceState, esc, readableError, toman, parsePriceInput, formatPriceInput, jalaliMonthNames, SEMANTIC_MIN_SCORE, semanticRankingCache, originalRenderManagedProducts },
+  mutable: {
+    productModalInvoiceTarget: { get: () => productModalInvoiceTarget, set: (value) => { productModalInvoiceTarget = value; } },
+    productSellingPriceAuto: { get: () => productSellingPriceAuto, set: (value) => { productSellingPriceAuto = value; } },
+    productCodePreviewSerial: { get: () => productCodePreviewSerial, set: (value) => { productCodePreviewSerial = value; } },
+    managedProductsLoadSerial: { get: () => managedProductsLoadSerial, set: (value) => { managedProductsLoadSerial = value; } },
+    productBarcodeBuffer: { get: () => productBarcodeBuffer, set: (value) => { productBarcodeBuffer = value; } },
+    productBarcodeStartedAt: { get: () => productBarcodeStartedAt, set: (value) => { productBarcodeStartedAt = value; } },
+    semanticSearchEnabled: { get: () => semanticSearchEnabled, set: (value) => { semanticSearchEnabled = value; } },
+    semanticSearchAvailable: { get: () => semanticSearchAvailable, set: (value) => { semanticSearchAvailable = value; } },
+    semanticDebounceTimer: { get: () => semanticDebounceTimer, set: (value) => { semanticDebounceTimer = value; } }
+  },
+  functions: {
+    gregorianToJalali: { get: () => gregorianToJalali, set: (value) => { gregorianToJalali = value; } },
+    jalaliToGregorian: { get: () => jalaliToGregorian, set: (value) => { jalaliToGregorian = value; } },
+    isoToJalali: { get: () => isoToJalali, set: (value) => { isoToJalali = value; } },
+    dateTimeToJalali: { get: () => dateTimeToJalali, set: (value) => { dateTimeToJalali = value; } },
+    jalaliInputToIso: { get: () => jalaliInputToIso, set: (value) => { jalaliInputToIso = value; } },
+    jalaliMonthDays: { get: () => jalaliMonthDays, set: (value) => { jalaliMonthDays = value; } },
+    parseJalaliDate: { get: () => parseJalaliDate, set: (value) => { parseJalaliDate = value; } },
+    renderJalaliPicker: { get: () => renderJalaliPicker, set: (value) => { renderJalaliPicker = value; } },
+    bindJalaliDatePickers: { get: () => bindJalaliDatePickers, set: (value) => { bindJalaliDatePickers = value; } },
+    initializeManagementMarkup: { get: () => initializeManagementMarkup, set: (value) => { initializeManagementMarkup = value; } },
+    groupSidebarMenu: { get: () => groupSidebarMenu, set: (value) => { groupSidebarMenu = value; } },
+    initializeSidebarGroups: { get: () => initializeSidebarGroups, set: (value) => { initializeSidebarGroups = value; } },
+    initializeSalesMarkupLegacy: { get: () => initializeSalesMarkupLegacy, set: (value) => { initializeSalesMarkupLegacy = value; } },
+    renderSaleProducts: { get: () => renderSaleProducts, set: (value) => { renderSaleProducts = value; } },
+    renderSaleCart: { get: () => renderSaleCart, set: (value) => { renderSaleCart = value; } },
+    loadSaleProducts: { get: () => loadSaleProducts, set: (value) => { loadSaleProducts = value; } },
+    addSaleProduct: { get: () => addSaleProduct, set: (value) => { addSaleProduct = value; } },
+    bindSalesEvents: { get: () => bindSalesEvents, set: (value) => { bindSalesEvents = value; } },
+    setManagedPage: { get: () => setManagedPage, set: (value) => { setManagedPage = value; } },
+    openManagementModal: { get: () => openManagementModal, set: (value) => { openManagementModal = value; } },
+    closeManagementModal: { get: () => closeManagementModal, set: (value) => { closeManagementModal = value; } },
+    loadProductPurchaseHistory: { get: () => loadProductPurchaseHistory, set: (value) => { loadProductPurchaseHistory = value; } },
+    openProductForInvoice: { get: () => openProductForInvoice, set: (value) => { openProductForInvoice = value; } },
+    openProductForEdit: { get: () => openProductForEdit, set: (value) => { openProductForEdit = value; } },
+    setupProductPriceFields: { get: () => setupProductPriceFields, set: (value) => { setupProductPriceFields = value; } },
+    updateProductSellingPrices: { get: () => updateProductSellingPrices, set: (value) => { updateProductSellingPrices = value; } },
+    bindProductPriceAutoEvents: { get: () => bindProductPriceAutoEvents, set: (value) => { bindProductPriceAutoEvents = value; } },
+    normalizeProductLookupText: { get: () => normalizeProductLookupText, set: (value) => { normalizeProductLookupText = value; } },
+    productLookupItems: { get: () => productLookupItems, set: (value) => { productLookupItems = value; } },
+    syncProductLookupValues: { get: () => syncProductLookupValues, set: (value) => { syncProductLookupValues = value; } },
+    initializeProductLookups: { get: () => initializeProductLookups, set: (value) => { initializeProductLookups = value; } },
+    renderProductOptions: { get: () => renderProductOptions, set: (value) => { renderProductOptions = value; } },
+    updateProductCodePreview: { get: () => updateProductCodePreview, set: (value) => { updateProductCodePreview = value; } },
+    renderManagedProducts: { get: () => renderManagedProducts, set: (value) => { renderManagedProducts = value; } },
+    renderManagedCategories: { get: () => renderManagedCategories, set: (value) => { renderManagedCategories = value; } },
+    renderManagedParties: { get: () => renderManagedParties, set: (value) => { renderManagedParties = value; } },
+    loadManagedProducts: { get: () => loadManagedProducts, set: (value) => { loadManagedProducts = value; } },
+    loadManagedCategories: { get: () => loadManagedCategories, set: (value) => { loadManagedCategories = value; } },
+    loadManagedParties: { get: () => loadManagedParties, set: (value) => { loadManagedParties = value; } },
+    bindManagementEvents: { get: () => bindManagementEvents, set: (value) => { bindManagementEvents = value; } },
+    initializeImportMarkup: { get: () => initializeImportMarkup, set: (value) => { initializeImportMarkup = value; } },
+    productPriceWarning: { get: () => productPriceWarning, set: (value) => { productPriceWarning = value; } },
+    enhanceProductManagementUi: { get: () => enhanceProductManagementUi, set: (value) => { enhanceProductManagementUi = value; } },
+    initializeProductColumnMenu: { get: () => initializeProductColumnMenu, set: (value) => { initializeProductColumnMenu = value; } },
+    applyProductColumnPrefs: { get: () => applyProductColumnPrefs, set: (value) => { applyProductColumnPrefs = value; } },
+    updateProductProfitPreview: { get: () => updateProductProfitPreview, set: (value) => { updateProductProfitPreview = value; } },
+    updateProductSelectionUi: { get: () => updateProductSelectionUi, set: (value) => { updateProductSelectionUi = value; } },
+    openProductDetails: { get: () => openProductDetails, set: (value) => { openProductDetails = value; } },
+    renderProductDetailsTab: { get: () => renderProductDetailsTab, set: (value) => { renderProductDetailsTab = value; } },
+    semanticRankingForTerm: { get: () => semanticRankingForTerm, set: (value) => { semanticRankingForTerm = value; } },
+    semanticPending: { get: () => semanticPending, set: (value) => { semanticPending = value; } },
+    updateSemanticToggle: { get: () => updateSemanticToggle, set: (value) => { updateSemanticToggle = value; } },
+    requestSemanticSearch: { get: () => requestSemanticSearch, set: (value) => { requestSemanticSearch = value; } },
+    refreshSemanticStatus: { get: () => refreshSemanticStatus, set: (value) => { refreshSemanticStatus = value; } },
+    renderEnhancedManagedProducts: { get: () => renderEnhancedManagedProducts, set: (value) => { renderEnhancedManagedProducts = value; } },
+    bindQuickProductPriceEvents: { get: () => bindQuickProductPriceEvents, set: (value) => { bindQuickProductPriceEvents = value; } },
+    alignProductPageHeader: { get: () => alignProductPageHeader, set: (value) => { alignProductPageHeader = value; } },
+    updateProductsTotalCount: { get: () => updateProductsTotalCount, set: (value) => { updateProductsTotalCount = value; } }
   }
-
-  async function loadSettings() {
-    const settings = await window.api.settings.get();
-    const store = settings.store || {};
-    const print = settings.print || {};
-    $('#settingsStoreName').value = store.name || '';
-    $('#settingsStoreSlogan').value = store.slogan || '';
-    $('#settingsStorePhone').value = store.phone || '';
-    $('#settingsStorePostalCode').value = store.postalCode || '';
-    $('#settingsStoreAddress').value = store.address || '';
-    $('#settingsStoreWebsite').value = store.website || '';
-    $('#settingsStoreInstagram').value = store.instagram || '';
-    $('#settingsStoreRubika').value = store.rubika || '';
-    $('#settingsInvoiceFooter').value = store.footer || '';
-    $('#settingsLogoPathValue').value = store.logoPath || '';
-    $('#settingsLogoPath').textContent = store.logoPath ? store.logoPath : 'لوگویی انتخاب نشده است.';
-    $('#settingsPaper').value = print.paperSize || 'A4';
-    $('#settingsColor').checked = print.color !== false;
-    $('#settingsAutoPrintSale').checked = print.autoPrintSale === true;
-    $('#settingsAutoPrintPurchase').checked = print.autoPrintPurchase === true;
-    await loadPrinters(print.printerName || '');
-  }
-
-  $('#reloadPrinters').addEventListener('click', () => loadPrinters($('#settingsPrinter').value));
-  $('#chooseStoreLogo').addEventListener('click', async () => {
-    const result = await window.api.settings.chooseLogo();
-    if (!result.canceled) {
-      $('#settingsLogoPathValue').value = result.path;
-      $('#settingsLogoPath').textContent = result.path;
-    }
-  });
-  $('#storeSettingsForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const error = $('#storeSettingsError');
-    error.classList.add('hidden');
-    try {
-      const current = await window.api.settings.get();
-      await window.api.settings.save({
-        ...current,
-        store: {
-          name: $('#settingsStoreName').value,
-          slogan: $('#settingsStoreSlogan').value,
-          phone: $('#settingsStorePhone').value,
-          postalCode: $('#settingsStorePostalCode').value,
-          address: $('#settingsStoreAddress').value,
-          website: $('#settingsStoreWebsite').value,
-          instagram: $('#settingsStoreInstagram').value,
-          rubika: $('#settingsStoreRubika').value,
-          footer: $('#settingsInvoiceFooter').value,
-          logoPath: $('#settingsLogoPathValue').value
-        }
-      });
-      showToast('مشخصات فروشگاه ذخیره شد.');
-    } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
-  });
-  $('#printSettingsForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const error = $('#printSettingsError');
-    error.classList.add('hidden');
-    try {
-      const current = await window.api.settings.get();
-      await window.api.settings.save({
-        ...current,
-        print: {
-          printerName: $('#settingsPrinter').value,
-          paperSize: $('#settingsPaper').value,
-          color: $('#settingsColor').checked,
-          autoPrintSale: $('#settingsAutoPrintSale').checked,
-          autoPrintPurchase: $('#settingsAutoPrintPurchase').checked
-        }
-      });
-      showToast('تنظیمات چاپ ذخیره شد.');
-    } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
-  });
-  // This original settings screen is superseded at parse time by
-  // initializeSettingsPageV2 (03-settings-print.js), which rebuilds #settingsPage
-  // and owns the post-login reload via refreshSettingsData. Its guarded reads
-  // (units, printers) are rejected before login, so skip the boot copy.
-  if (sessionReady) loadSettings().catch(() => {});
-}
-
-const originalManagedPageForSettings = setManagedPage;
-setManagedPage = function setManagedPageWithSettings(page) {
-  initializeSettingsPage();
-  // Resolved at call time: 04-invoices-assistant-reports.js loads later and
-  // provides the full page router (all managed pages), which supersedes the
-  // partial router defined earlier in this file.
-  (typeof setPageRouter === 'function' ? setPageRouter : originalManagedPageForSettings)(page);
-  if (page === 'settings') {
-    $('#settingsPage')?.classList.remove('hidden');
-    $('#placeholderPage')?.classList.add('hidden');
-  } else {
-    $('#settingsPage')?.classList.add('hidden');
-  }
-};
-initializeSettingsPage();
-
+});

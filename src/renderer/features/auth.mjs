@@ -1,3 +1,5 @@
+import { publishRendererBindings } from '../shared/bridge.mjs';
+
 let quickPinIdleTimer;
 let quickPinLocked = false;
 let quickPinMonitorStarted = false;
@@ -204,3 +206,20 @@ if (backupPanel && !$('#v2OfficialStart')) {
     }
   });
 }
+
+publishRendererBindings(window, {
+  constants: { previousSetManagedPageForOperations, backupPanel },
+  mutable: {
+    quickPinIdleTimer: { get: () => quickPinIdleTimer, set: (value) => { quickPinIdleTimer = value; } },
+    quickPinLocked: { get: () => quickPinLocked, set: (value) => { quickPinLocked = value; } },
+    quickPinMonitorStarted: { get: () => quickPinMonitorStarted, set: (value) => { quickPinMonitorStarted = value; } }
+  },
+  functions: {
+    ensureQuickPinLockUI: { get: () => ensureQuickPinLockUI, set: (value) => { ensureQuickPinLockUI = value; } },
+    resetQuickPinIdleTimer: { get: () => resetQuickPinIdleTimer, set: (value) => { resetQuickPinIdleTimer = value; } },
+    startQuickPinIdleMonitor: { get: () => startQuickPinIdleMonitor, set: (value) => { startQuickPinIdleMonitor = value; } },
+    initializeAuth: { get: () => initializeAuth, set: (value) => { initializeAuth = value; } },
+    installLoginSubmitGuard: { get: () => installLoginSubmitGuard, set: (value) => { installLoginSubmitGuard = value; } },
+    initializeSoftwareAboutPage: { get: () => initializeSoftwareAboutPage, set: (value) => { initializeSoftwareAboutPage = value; } }
+  }
+});

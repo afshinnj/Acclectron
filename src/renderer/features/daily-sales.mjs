@@ -1,3 +1,6 @@
+import { publishRendererBindings } from '../shared/bridge.mjs';
+import { localDateIso } from '../shared/date-utils.mjs';
+
 /* Daily-sales refinements: keep identical product/price rows together,
    accept keyboard prices with grouping separators, and persist Jalali dates. */
 function saveDailySaleDraft() {
@@ -168,7 +171,7 @@ const dailySaleDate = $('#saleDate');
 if (dailySaleDate) {
   dailySaleDate.type = 'text';
   dailySaleDate.inputMode = 'numeric';
-  if (!saleState.cart.length) dailySaleDate.value = isoToJalali(new Date().toISOString().slice(0, 10));
+  if (!saleState.cart.length) dailySaleDate.value = isoToJalali(localDateIso());
 }
 bindSalesEvents();
 bindJalaliDatePickers();
@@ -182,9 +185,7 @@ function initializeSaleCartModal() {
   $('#saleCartModalBody').appendChild(cart);
   $('#saleCartButton').addEventListener('click', () => { $('#saleCartModal').classList.remove('hidden'); renderSaleCart(); });
   $('#closeSaleCart').addEventListener('click', () => $('#saleCartModal').classList.add('hidden'));
-  $('#saleCartModal').addEventListener('click', (event) => { if (event.target.id === 'saleCartModal') event.currentTarget.classList.add('hidden'); });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') $('#saleCartModal')?.classList.add('hidden');
     if (event.key === 'F8' && !authOverlayVisible() && !event.target.matches('input,textarea,select')) { event.preventDefault(); $('#saleCartButton')?.click(); }
   });
   renderSaleCart();
@@ -237,3 +238,11 @@ document.addEventListener('click', async (event) => {
   }
 }, true);
 
+publishRendererBindings(window, {
+  constants: { dailySalesNodes, dailySaleDate },
+  functions: {
+    saveDailySaleDraft: { get: () => saveDailySaleDraft, set: (value) => { saveDailySaleDraft = value; } },
+    restoreDailySaleDraft: { get: () => restoreDailySaleDraft, set: (value) => { restoreDailySaleDraft = value; } },
+    initializeSaleCartModal: { get: () => initializeSaleCartModal, set: (value) => { initializeSaleCartModal = value; } }
+  }
+});

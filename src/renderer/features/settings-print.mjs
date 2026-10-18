@@ -1,3 +1,6 @@
+import { publishRendererBindings } from '../shared/bridge.mjs';
+let refreshSettingsData = () => Promise.resolve();
+
 /* Extended settings workspace: replaces the initial two-card screen with
    tabbed, persisted configuration while keeping backward-compatible APIs. */
 function initializeSettingsPageV2() {
@@ -226,7 +229,6 @@ async function openInvoicePrintPreview(kind, id) {
     document.querySelector('#invoicePrintPageStyle')?.remove();
   };
   backdrop.querySelector('.invoice-preview-close').addEventListener('click', close);
-  backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
   backdrop.querySelector('.invoice-preview-print').addEventListener('click', () => {
     setPrintMode(true);
     afterPaint().then(() => window.api.print.invoice({ print: settings.print, ...invoicePrintPayload(settings) }))
@@ -250,3 +252,18 @@ async function openInvoicePrintPreview(kind, id) {
   });
 }
 
+publishRendererBindings(window, {
+  constants: { faDigits, afterPaint },
+  functions: {
+    initializeSettingsPageV2: { get: () => initializeSettingsPageV2, set: (value) => { initializeSettingsPageV2 = value; } },
+    refreshSettingsData: { get: () => refreshSettingsData, set: (value) => { refreshSettingsData = value; } },
+    installQuickPinSettings: { get: () => installQuickPinSettings, set: (value) => { installQuickPinSettings = value; } },
+    applyDefaultPaymentMethod: { get: () => applyDefaultPaymentMethod, set: (value) => { applyDefaultPaymentMethod = value; } },
+    printPaymentReceipt: { get: () => printPaymentReceipt, set: (value) => { printPaymentReceipt = value; } },
+    invoicePrintMarkup: { get: () => invoicePrintMarkup, set: (value) => { invoicePrintMarkup = value; } },
+    invoicePrintPageStyle: { get: () => invoicePrintPageStyle, set: (value) => { invoicePrintPageStyle = value; } },
+    syncInvoicePrintPageStyle: { get: () => syncInvoicePrintPageStyle, set: (value) => { syncInvoicePrintPageStyle = value; } },
+    invoicePrintPayload: { get: () => invoicePrintPayload, set: (value) => { invoicePrintPayload = value; } },
+    openInvoicePrintPreview: { get: () => openInvoicePrintPreview, set: (value) => { openInvoicePrintPreview = value; } }
+  }
+});

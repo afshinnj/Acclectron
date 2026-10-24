@@ -962,9 +962,9 @@ test('dashboard sales trend only includes the current Saturday-to-today week', (
   const { directory, db } = openTestDatabase();
   try {
     const product = db.prepare('SELECT id FROM products LIMIT 1').get();
-    createSale({ invoiceNumber: 'S-TREND-PREVIOUS', date: '2026-09-05', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
-    createSale({ invoiceNumber: 'S-TREND-CURRENT', date: '2026-09-13', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
-    createSale({ invoiceNumber: 'S-TREND-FUTURE', date: '2026-09-17', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }] });
+    createSale({ invoiceNumber: 'S-TREND-PREVIOUS', date: '2026-09-05', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }], paidAmount: 2000 });
+    createSale({ invoiceNumber: 'S-TREND-CURRENT', date: '2026-09-13', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }], paidAmount: 2000 });
+    createSale({ invoiceNumber: 'S-TREND-FUTURE', date: '2026-09-17', items: [{ productId: product.id, quantity: 1, unitPrice: 2000 }], paidAmount: 2000 });
 
     const summary = getDashboardSummary({ today: '2026-09-16' });
     assert.equal(summary.salesTrendStart, '2026-09-12');
@@ -1059,14 +1059,14 @@ test('sales report combines daily and formal sales with profit and product break
     createSale({ invoiceNumber: 'S-REPORT-D', source: 'daily', date: '2026-08-30', items: [{ productId: product.id, quantity: 2, unitPrice: 1000 }], paidAmount: 2000 });
     createSale({ invoiceNumber: 'S-REPORT-I', source: 'invoice', date: '2026-08-31', discount: 100, tax: 90, items: [{ productId: product.id, quantity: 1, unitPrice: 1200 }], paidAmount: 0 });
     const report = getSalesReport({ from: '2026-08-30', to: '2026-08-31' });
-    assert.equal(report.summary.invoiceCount, 2);
+    assert.equal(report.summary.invoiceCount, 1, 'unsettled invoices are excluded from sales statistics');
     assert.equal(report.summary.dailyCount, 1);
-    assert.equal(report.summary.formalCount, 1);
-    assert.equal(report.summary.netSales, 310000);
-    assert.equal(report.summary.costTotal, 150000);
-    assert.equal(report.summary.profitTotal, 160000);
-    assert.equal(report.byDate.length, 2);
-    assert.equal(report.byProduct[0].quantity, 3);
+    assert.equal(report.summary.formalCount, 0);
+    assert.equal(report.summary.netSales, 200000);
+    assert.equal(report.summary.costTotal, 100000);
+    assert.equal(report.summary.profitTotal, 100000);
+    assert.equal(report.byDate.length, 2, 'daily report keeps empty dates in the selected range');
+    assert.equal(report.byProduct[0].quantity, 2);
     assert.equal(getSalesReport({ source: 'daily' }).summary.invoiceCount, 1);
   } finally {
     closeDatabase();

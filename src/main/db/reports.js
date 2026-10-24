@@ -252,7 +252,9 @@ function getSalesReport(payload = {}) {
   const to = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.to || '')) ? String(payload.to) : '';
   const source = ['daily', 'invoice'].includes(String(payload.source || '')) ? String(payload.source) : '';
   const period = ['day', 'week', 'month', 'year'].includes(String(payload.period || '')) ? String(payload.period) : 'day';
-  const conditions = ["s.status = 'active'"];
+  // Sales statistics represent settled sales only. Open balances remain
+  // visible in receivables, but do not count as completed revenue.
+  const conditions = ["s.status = 'active'", 's.remaining_amount = 0'];
   const params = [];
   if (from) { conditions.push('s.date >= ?'); params.push(from); }
   if (to) { conditions.push('s.date <= ?'); params.push(to); }
@@ -584,7 +586,7 @@ function getProfitLossReport(payload = {}) {
   const sales = db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN total > tax THEN total - tax ELSE 0 END), 0) AS netSales,
       COALESCE(SUM(cost_total), 0) AS costTotal, COUNT(*) AS invoiceCount
-    FROM sales WHERE status = 'active' AND ${range('date')}
+    FROM sales WHERE status = 'active' AND remaining_amount = 0 AND ${range('date')}
   `).get(from, from, to, to);
   const saleReturns = db.prepare(`
     SELECT COALESCE(SUM(${returnedNet}), 0) AS total,
@@ -609,14 +611,14 @@ function getProfitLossReport(payload = {}) {
   const netProfit = grossProfit + otherIncome - expenses;
   const byDate = db.prepare(`
     WITH dates AS (
-      SELECT date FROM sales WHERE status = 'active' AND ${range('date')}
+      SELECT date FROM sales WHERE status = 'active' AND remaining_amount = 0 AND ${range('date')}
       UNION SELECT date FROM cash_transactions WHERE reference_type IS NULL AND ${range('date')}
       UNION SELECT date FROM sales_returns WHERE status = 'completed' AND ${range('date')}
     )
     SELECT dates.date,
-      COALESCE((SELECT SUM(CASE WHEN total > tax THEN total-tax ELSE 0 END) FROM sales WHERE status='active' AND sales.date=dates.date), 0)
+      COALESCE((SELECT SUM(CASE WHEN total > tax THEN total-tax ELSE 0 END) FROM sales WHERE status='active' AND remaining_amount=0 AND sales.date=dates.date), 0)
         - COALESCE((SELECT SUM(${returnedNet}) FROM sales_returns sr JOIN sales s ON s.id = sr.sale_id WHERE sr.status='completed' AND sr.date=dates.date), 0) AS netSales,
-      COALESCE((SELECT SUM(cost_total) FROM sales WHERE status='active' AND sales.date=dates.date), 0)
+      COALESCE((SELECT SUM(cost_total) FROM sales WHERE status='active' AND remaining_amount=0 AND sales.date=dates.date), 0)
         - COALESCE((SELECT SUM(sri.quantity*si.purchase_price) FROM sales_return_items sri JOIN sales_returns sr ON sr.id=sri.return_id LEFT JOIN sale_items si ON si.id=sri.sale_item_id WHERE sr.status='completed' AND sr.date=dates.date), 0) AS costTotal,
       COALESCE((SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS expenses,
       COALESCE((SELECT SUM(CASE WHEN type='income' THEN amount ELSE 0 END) FROM cash_transactions WHERE reference_type IS NULL AND cash_transactions.date=dates.date), 0) AS otherIncome
